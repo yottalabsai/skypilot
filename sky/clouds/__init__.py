@@ -27,6 +27,7 @@ from sky.clouds.runpod import RunPod
 from sky.clouds.scp import SCP
 from sky.clouds.vast import Vast
 from sky.clouds.vsphere import Vsphere
+from sky.clouds.yotta import Yotta
 
 __all__ = [
     'IBM',
@@ -43,6 +44,7 @@ __all__ = [
     'Vast',
     'OCI',
     'Vsphere',
+    'Yotta',
     'Kubernetes',
     'CloudImplementationFeatures',
     'Region',

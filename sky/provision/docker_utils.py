@@ -41,7 +41,7 @@ class DockerLoginConfig:
     server: str
 
     def format_image(self, image: str) -> str:
-        """Format the image name with the server prefix."""
+        """x.Format the image name with the server prefi"""
         server_prefix = f'{self.server}/'
         if not image.startswith(server_prefix):
             return f'{server_prefix}{image}'

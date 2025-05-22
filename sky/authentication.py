@@ -36,7 +36,7 @@ from sky import clouds
 from sky import exceptions
 from sky import sky_logging
 from sky import skypilot_config
-from sky.adaptors import common as adaptors_common
+from sky.adaptors import common as adaptors_common, yotta
 from sky.adaptors import gcp
 from sky.adaptors import ibm
 from sky.adaptors import kubernetes
@@ -526,3 +526,20 @@ def setup_fluidstack_authentication(config: Dict[str, Any]) -> Dict[str, Any]:
     client.get_or_add_ssh_key(public_key)
     config['auth']['ssh_public_key'] = public_key_path
     return configure_ssh_info(config)
+
+
+# ---------------------------------- Yotta ---------------------------------- #
+# def setup_yotta_authentication(config: Dict[str, Any]) -> Dict[str, Any]:
+#     """Sets up SSH authentication for Yotta.
+#     - Generates a new SSH key pair if one does not exist.
+#     - Adds the public SSH key to the user's Yotta account.
+#     """
+#     # yotta 创建pod的时候传递public_key就可以所以实际不需要这个方法吗？
+#     _, public_key_path = get_or_generate_keys()
+#     with open(public_key_path, 'r', encoding='UTF-8') as pub_key_file:
+#         public_key = pub_key_file.read().strip()
+#         # / TODO(romilb): Add support for Yotta. 如何没有就添加这个public_key
+#         # runpod.runpod.cli.groups.ssh.functions.add_ssh_key(public_key)
+#         yotta.add_ssh_key(public_key)
+
+#     return configure_ssh_info(config)
