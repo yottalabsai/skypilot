@@ -6,7 +6,7 @@ from typing import Any, Dict, List, Optional
 from sky import sky_logging
 from sky.provision import common
 from sky.provision.yotta import yotta_utils
-from sky.provision.yotta.yotta_utils import yotta_client
+from sky.provision.yotta.yotta_utils import PodStatusEnum, yotta_client
 from sky.utils import common_utils
 from sky.utils import resources_utils
 from sky.utils import status_lib
@@ -17,21 +17,6 @@ QUERY_PORTS_TIMEOUT_SECONDS = 30
 
 logger = sky_logging.init_logger(__name__)
 
-
-class PodStatusEnum(enum.Enum):
-    """Pod status."""
-    INITIALIZE = 0
-    RUNNING = 1
-    PAUSING = 2
-    PAUSED = 3
-    TERMINATING = 4
-    TERMINATED = 5
-    FAILED = 6
-
-class CloudType(enum.Enum):
-    """cloud type."""
-    SECURE_CLOUD = 1
-    COMMUNITY = 2
 
 def _filter_instances(cluster_name_on_cloud: str,
                       status_filters: Optional[List[PodStatusEnum]],

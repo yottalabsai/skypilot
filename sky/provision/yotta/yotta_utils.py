@@ -1,20 +1,13 @@
 """FluidStack API client."""
 
 import base64
+import enum
 import json
 import os
-import time
 from typing import Any, Dict, List, Optional
 
-
-from sky.provision.yotta.instance import CloudType, PodStatusEnum
 from sky.skylet import constants
-from sky.utils import annotations
 import requests
-
-from sky.provision.yotta.yotta_utils import YottaClient
-yotta_client = YottaClient()
-
 
 CREDENTIALS_FILE_PATH = os.path.expanduser('~/.yotta/credentials')
 ENDPOINT = "https://console.yottalabs.ai/api"
@@ -24,6 +17,23 @@ GPU_NAME_MAP = {
     '1x_L4_SECURE': 'NVIDIA_L4_24G',
     '2x_L4_SECURE': 'NVIDIA_L4_24G',
 }
+
+
+class PodStatusEnum(enum.Enum):
+    """Pod status."""
+    INITIALIZE = 0
+    RUNNING = 1
+    PAUSING = 2
+    PAUSED = 3
+    TERMINATING = 4
+    TERMINATED = 5
+    FAILED = 6
+
+class CloudType(enum.Enum):
+    """cloud type."""
+    SECURE_CLOUD = 1
+    COMMUNITY = 2
+
 
 def _load_credentials() -> tuple[str, str]:
     """Reads the credentials file and returns userId and apikey."""
@@ -58,12 +68,6 @@ def get_ssh_port(instance):
             if port.get('protocol') == 'SSH':
                 return port
         return None
-            
-class YottaAPIError(Exception):
-
-    def __init__(self, message: str, code: int = 400):
-        self.code = code
-        super().__init__(message)
 
 def raise_yotta_error(response: 'requests.Response') -> None:
     """Raise YottaAPIError if appropriate."""
@@ -75,7 +79,6 @@ def raise_yotta_error(response: 'requests.Response') -> None:
             f'Unexpected error. Status code: {status_code} \n {response.text} '
             f'\n {str(e)}',
             status_code)
-
     if response.ok:
         if resp_json.get('code') != 10000:
             raise YottaAPIError(
@@ -83,6 +86,13 @@ def raise_yotta_error(response: 'requests.Response') -> None:
                 resp_json.get('code', status_code)
             )
         return
+
+            
+class YottaAPIError(Exception):
+
+    def __init__(self, message: str, code: int = 400):
+        self.code = code
+        super().__init__(message)
 
 class YottaClient:
     """Yotta API Client"""
@@ -188,13 +198,14 @@ class YottaClient:
 #     }
 # }
 
-    def get_gpu(self, gpu_type: str,  gpu_quantity: int, cloud_type: CloudType, region: str) -> Dict[str, Any]:
+    def get_gpu(self, gpu_type: str,  gpu_quantity: int, cloud_type: str, region: str) -> Dict[str, Any]:
         """Gets the GPU specs for the given GPU type.
     
         Returns:
             gpu_specs: The GPU specs.
         """
         url = f"{ENDPOINT}/gpu/type/filter"
+        cloud_type = getattr(CloudType, cloud_type, None)
         request_data = {
             "gpuType": gpu_type,
             "gpuCount": gpu_quantity,
@@ -222,7 +233,6 @@ class YottaClient:
         gpu_type = GPU_NAME_MAP[instance_type.split('_')[1]]
         gpu_quantity = int(instance_type.split('_')[0].replace('x', ''))
         cloud_type = instance_type.split('_')[2]
-    
         gpu_specs = self.get_gpu(gpu_type, gpu_quantity, cloud_type, zone)
         # TODO : keep this align with setups in
         # `provision.kuberunetes.instance.py`
@@ -403,3 +413,7 @@ class YottaClient:
     #     )
     #     raise_yotta_error(response)
     #     return response.json()
+
+
+
+yotta_client = YottaClient()
