@@ -1,5 +1,4 @@
-"""RunPod instance provisioning."""
-import enum
+"""Yotta instance provisioning."""
 import time
 from typing import Any, Dict, List, Optional
 

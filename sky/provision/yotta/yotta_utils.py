@@ -6,11 +6,15 @@ import json
 import os
 from typing import Any, Dict, List, Optional
 
+from sky import sky_logging
 from sky.skylet import constants
 import requests
 
+logger = sky_logging.init_logger(__name__)
+
 CREDENTIALS_FILE_PATH = os.path.expanduser('~/.yotta/credentials')
-ENDPOINT = "https://console.yottalabs.ai/api"
+# ENDPOINT = "https://console.yottalabs.ai/sdk/api"
+ENDPOINT = "http://127.0.0.1:10001/sdk/api"
 API_KEY_HEADER = 'X-API-KEY'
 
 GPU_NAME_MAP = {
@@ -72,6 +76,7 @@ def get_ssh_port(instance):
 def raise_yotta_error(response: 'requests.Response') -> None:
     """Raise YottaAPIError if appropriate."""
     status_code = response.status_code
+    logger.info(f"response: {response.status_code} - {response.text}")
     try:
         resp_json = response.json()
     except (KeyError, json.decoder.JSONDecodeError) as e:
@@ -101,12 +106,13 @@ class YottaClient:
         self.user_id, self.api_key = _load_credentials()
     
     def check_api_key(self) -> bool:
-        # todo: add check api key
         url = f"{ENDPOINT}/key/check?userId={self.user_id}"
+        logger.info(f"Checking api key for user {self.user_id}")
         response = requests.get(url, headers={API_KEY_HEADER: self.api_key})
         raise_yotta_error(response)
         check_result = response.json()
         # True if api key is valid
+        logger.info(f"Api key check result: {check_result}")
         return check_result['data']
 
     def list_instances(self, cluster_name_on_cloud: str) -> Dict[str, Dict[str, Any]]: 

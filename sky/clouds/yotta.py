@@ -7,7 +7,7 @@ from sky import clouds
 from sky.clouds import service_catalog
 from sky.utils import registry
 from sky.utils import resources_utils
-from sky.provision.yotta import yotta_utils
+from sky.provision.yotta.yotta_utils import yotta_client
 if typing.TYPE_CHECKING:
     from sky import resources as resources_lib
 
@@ -260,13 +260,13 @@ class Yotta(clouds.Cloud):
         return resources_utils.FeasibleResources(_make(instance_list),
                                                  fuzzy_candidate_list, None)
 
-    @classmethod      
+    @classmethod
     def _check_compute_credentials(cls) -> Tuple[bool, Optional[str]]:
         """Checks if the user has access credentials to
         Yotta's compute service."""
         try:
-            vaild = yotta_utils.YottaClient.check_api_key()
-            assert vaild, ('Invalid Yotta API key.')
+            valid = yotta_client.check_api_key()
+            assert valid, ('Invalid Yotta API key.')
         except AssertionError:
             return False, ('Failed to access Yotta Cloud'
                            ' with credentials. '
