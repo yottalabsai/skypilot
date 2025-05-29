@@ -21,7 +21,7 @@ def _filter_instances(cluster_name_on_cloud: str,
                       status_filters: Optional[List[PodStatusEnum]],
                       head_only: bool = False) -> Dict[str, Any]:
 
-    instances = yotta_client.list_instances()
+    instances = yotta_client.list_instances(cluster_name_on_cloud)
     possible_names = [f'{cluster_name_on_cloud}-head']
     if not head_only:
         possible_names.append(f'{cluster_name_on_cloud}-worker')
@@ -87,6 +87,7 @@ def run_instances(region: str, cluster_name_on_cloud: str,
             created_instance_ids=[])
 
     created_instance_ids = []
+
     for _ in range(to_start_count):
         node_type = 'head' if head_instance_id is None else 'worker'
         try:
@@ -223,6 +224,7 @@ def query_instances(
             continue
         statuses[inst_id] = status
     return statuses
+
 def cleanup_ports(
     cluster_name_on_cloud: str,
     ports: List[str],

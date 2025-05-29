@@ -18,6 +18,7 @@ ENDPOINT = "http://127.0.0.1:10001/sdk/api"
 API_KEY_HEADER = 'X-API-KEY'
 
 GPU_NAME_MAP = {
+    '1x_A10_SECURE': 'NVIDIA_A10_24G',
     '1x_L4_SECURE': 'NVIDIA_L4_24G',
     '2x_L4_SECURE': 'NVIDIA_L4_24G',
 }
@@ -35,7 +36,7 @@ class PodStatusEnum(enum.Enum):
 
 class CloudType(enum.Enum):
     """cloud type."""
-    SECURE_CLOUD = 1
+    SECURE = 1
     COMMUNITY = 2
 
 
@@ -91,6 +92,10 @@ def raise_yotta_error(response: 'requests.Response') -> None:
                 resp_json.get('code', status_code)
             )
         return
+    else:
+        raise YottaAPIError(
+            f'Unexpected error. Status code: {status_code} \n {response.text}',
+            status_code)
 
             
 class YottaAPIError(Exception):
@@ -116,113 +121,39 @@ class YottaClient:
         return check_result['data']
 
     def list_instances(self, cluster_name_on_cloud: str) -> Dict[str, Dict[str, Any]]: 
-        url = f"{ENDPOINT}/pod/list"
+        url = f"{ENDPOINT}/compute/list"
         all_records: List[Dict[str, Any]] = []
         request_data = {
-            "search": {
-                "podName": cluster_name_on_cloud
-            },
-            "pageNumber": 1,
-            "pageSize": 50
+            "name": cluster_name_on_cloud
         }
 
-        while True:
-            response = requests.post(
-                url,
-                headers={API_KEY_HEADER: self.api_key},
-                json=request_data
-            )
-            response.raise_for_status() 
+        response = requests.post(
+            url,
+            headers={API_KEY_HEADER: self.api_key},
+            json=request_data
+        )
+        response.raise_for_status()
+        response_json = response.json()
+        if response_json["code"] != 10000:
+            raise ValueError(f"API returned an error: {response_json['message']}")
 
-            response_json = response.json()
-            if response_json["code"] != 200:
-                raise ValueError(f"API returned an error: {response_json['message']}")
-
-            records = response_json["data"]["records"]
-            all_records.extend(records)
-
-            if response_json["data"]["pageNumber"] >= response_json["data"]["totalPage"]:
-                break
-
-            request_data["pageNumber"] = response_json["data"]["pageNumber"] + 1
+        records = response_json["data"]
+        all_records.extend(records)
 
         unique_records = {}
-        seen_ids = set()
         for record in all_records:
-            if record["id"] not in seen_ids:
-                unique_records[record["id"]] = record
-                seen_ids.add(record["id"])
-                status = PodStatusEnum(record.get('status'))
-                if status == PodStatusEnum.RUNNING:
-                    ports = record.get('expose', [])
-                    record['port2endpoint'] = {}
-                    for port in ports:
-                        # container private port mapping to host public port
-                        record['port2endpoint'][port['port']] = {
-                            'host': port['host'],
-                            'port': port['proxyPort']
-                        }
+            unique_records[record["id"]] = record
+            status = PodStatusEnum(record.get('status'))
+            if status == PodStatusEnum.RUNNING:
+                ports = record.get('expose', [])
+                record['port2endpoint'] = {}
+                for port in ports:
+                    # container private port mapping to host public port
+                    record['port2endpoint'][port['port']] = {
+                        'host': port['host'],
+                        'port': port['proxyPort']
+                    }
         return unique_records
-        
-#query myPods {
-#     myself {
-#         pods {
-#             id  有
-#             containerDiskInGb containerVolume
-#             containerRegistryAuthId  没有
-#             costPerHr  running singleCardPrice*gpuCount+ persistentVolume * persistentVolumePrice + containerVolume*containerVolumePrice
-#             desiredStatus  没有
-#             dockerArgs 没有
-#             dockerId 没有
-#             env  List<KeyValuePairDTO> environmentVars;
-#             gpuCount  gpuCount
-#             imageName   image
-#             lastStatusChange  
-#             machineId
-#             memoryInGb
-#             name
-#             podType
-#             port
-#             ports
-#             uptimeSeconds
-#             vcpuCount
-#             volumeInGb
-#             volumeMountPath
-#             runtime {
-#                 ports{
-#                     ip
-#                     isIpPublic
-#                     privatePort
-#                     publicPort
-#                     type
-#                 }
-#             }
-#             machine {
-#                 gpuDisplayName
-#             }
-#         }
-#     }
-# }
-
-    def get_gpu(self, gpu_type: str,  gpu_quantity: int, cloud_type: str, region: str) -> Dict[str, Any]:
-        """Gets the GPU specs for the given GPU type.
-    
-        Returns:
-            gpu_specs: The GPU specs.
-        """
-        url = f"{ENDPOINT}/gpu/type/filter"
-        cloud_type = getattr(CloudType, cloud_type, None)
-        request_data = {
-            "gpuType": gpu_type,
-            "gpuCount": gpu_quantity,
-            "cloudType": cloud_type.value,
-            "region": region,
-        }
-        response = requests.post(url, 
-                                 headers={API_KEY_HEADER: self.api_key},
-                                 json=request_data)
-        raise_yotta_error(response)
-        return response.json()
 
     def launch(self, cluster_name: str, node_type: str, instance_type: str, region: str,
                zone: str, image_name: str,
@@ -236,10 +167,10 @@ class YottaClient:
             instance_id: The instance ID.
         """
         name = f'{cluster_name}-{node_type}'
-        gpu_type = GPU_NAME_MAP[instance_type.split('_')[1]]
+        gpu_type = GPU_NAME_MAP[instance_type]
         gpu_quantity = int(instance_type.split('_')[0].replace('x', ''))
         cloud_type = instance_type.split('_')[2]
-        gpu_specs = self.get_gpu(gpu_type, gpu_quantity, cloud_type, zone)
+        cloud_type = getattr(CloudType, cloud_type, None)
         # TODO : keep this align with setups in
         # `provision.kuberunetes.instance.py`
         setup_cmd = (
@@ -282,30 +213,28 @@ class YottaClient:
         expose.append({'port': constants.SKY_REMOTE_RAY_PORT, 'protocol': 'HTTP'})
     
         request_data = {
-            'podName': name,
+            'name': name,
             'image': image_name,
-            'resourceType': 1, # gpu type
-            'resourceId': gpu_specs['id'],
+            'gpuType': gpu_type,
             'gpuCount': gpu_quantity,
-            'containerVolume': gpu_specs['singleCardContainerVolumeLimit'],
-            'cloud_type': cloud_type,
+            'cloudType': cloud_type.value,
             'region': zone,
             'expose': expose,
-            'support_public_ip': True,
             'initializationCommand': docker_args,
             'sshUser':  ssh_user,
             'sshPublicKey': public_key,
         }
-        
-        url = f'{ENDPOINT}/pod/create'
+        url = f'{ENDPOINT}/compute/create'
 
         response = requests.post(
             url,
             headers={API_KEY_HEADER: self.api_key},
             json=request_data,
         )
-        raise_yotta_error(response)       
-        return response['data']
+        logger.debug(f"response: {response.status_code} - {response.text}")
+        raise_yotta_error(response)
+        response_json = response.json()
+        return response_json["data"]
 
 
 
@@ -390,13 +319,13 @@ class YottaClient:
     #     regions = get_regions(plans)
     #     return regions
 
-    def terminate_instances(self, instance_id: str):
+    def terminate_instances(self, instance_id: int):
         """Terminate instances."""
         if  not instance_id:
             return
-        url = f"{ENDPOINT}/pod/action"
+        url = f"{ENDPOINT}/compute/action"
         request_data = {
-            "pod_ids": [instance_id],
+            "id": instance_id,
             "action": "terminate"
         }
         response = requests.post(url= url,
@@ -404,22 +333,5 @@ class YottaClient:
                                    json=request_data)
         raise_yotta_error(response)
         return response.json()
-
-    # def stop(self, instance_id: str):
-    #     response = requests.put(ENDPOINT + 'instances/' + instance_id + '/stop',
-    #                             headers={'api-key': self.api_key})
-    #     raise_yotta_error(response)
-    #     return response.json()
-
-    # def rename(self, instance_id: str, name: str) -> str:
-    #     response = requests.put(
-    #         ENDPOINT + f'instances/{instance_id}/rename',
-    #         headers={'api-key': self.api_key},
-    #         json=dict(new_instance_name=name),
-    #     )
-    #     raise_yotta_error(response)
-    #     return response.json()
-
-
 
 yotta_client = YottaClient()

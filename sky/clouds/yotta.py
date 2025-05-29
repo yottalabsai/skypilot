@@ -190,11 +190,6 @@ class Yotta(clouds.Cloud):
         hourly_cost = self.instance_type_to_hourly_cost(
             instance_type=instance_type, use_spot=use_spot)
 
-        # default to root
-        docker_username_for_yotta = (resources.docker_username_for_yotta
-                                      if resources.docker_username_for_yotta
-                                      is not None else 'root')
-
         return {
             'instance_type': instance_type,
             'custom_resources': custom_resources,
@@ -203,7 +198,6 @@ class Yotta(clouds.Cloud):
             'image_id': image_id,
             'use_spot': use_spot,
             'bid_per_gpu': str(hourly_cost),
-            'docker_username_for_yotta': docker_username_for_yotta,
         }
 
     def _get_feasible_launchable_resources(
