@@ -100,10 +100,7 @@ def run_instances(region: str, cluster_name_on_cloud: str,
                 image_name=config.node_config['ImageId'],
                 ports=config.ports_to_open_on_launch,
                 public_key=config.node_config['PublicKey'],
-                ssh_user=config.authentication_config['ssh_user']
-                # don't support docker login config for now
-                # docker_login_config=config.provider_config.get(
-                #     'docker_login_config'),
+                ssh_user=config.authentication_config['ssh_user'],
             )
         except Exception as e:  # pylint: disable=broad-except
             logger.warning(f'run_instances error: {e}')
@@ -247,10 +244,10 @@ def query_ports(
         instances = _filter_instances(cluster_name_on_cloud,
                                       None,
                                       head_only=True)
-        # don't support muiltiple instances
+        # don't support multiple instances
         assert len(instances) <= 1
         # It is possible that the instance is terminated on console by
-        # the user. In this case, the instance will not be found and we
+        # the user. In this case, the instance will not be found, and we
         # should return an empty dict.
         if not instances:
             return {}

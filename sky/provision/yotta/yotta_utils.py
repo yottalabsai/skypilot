@@ -1,4 +1,4 @@
-"""FluidStack API client."""
+"""Yotta API client."""
 
 import base64
 import enum
@@ -235,89 +235,6 @@ class YottaClient:
         raise_yotta_error(response)
         response_json = response.json()
         return response_json["data"]
-
-
-
-    # def create_instance(
-    #     self,
-    #     instance_type: str = '',
-    #     name: str = '',
-    #     region: str = '',
-    #     ssh_pub_key: str = '',
-    #     count: int = 1,
-    # ) -> List[str]:
-    #     """Launch new instances."""
-
-    #     plans = self.get_plans()
-    #     regions = self.list_regions()
-    #     gpu_type, gpu_count = instance_type.split('::')
-    #     gpu_count = int(gpu_count)
-
-    #     plans = [
-    #         plan for plan in plans if plan['gpu_type'] == gpu_type and
-    #         gpu_count in plan['gpu_counts'] and region in plan['regions']
-    #     ]
-    #     if not plans:
-    #         raise YottaAPIError(
-    #             f'Plan {instance_type} out of stock in region {region}')
-
-    #     ssh_key = self.get_or_add_ssh_key(ssh_pub_key)
-    #     default_operating_system = 'ubuntu_22_04_lts_nvidia'
-    #     instance_ids = []
-    #     for _ in range(count):
-    #         body = dict(gpu_type=gpu_type,
-    #                     gpu_count=gpu_count,
-    #                     region=regions[region],
-    #                     operating_system_label=default_operating_system,
-    #                     name=name,
-    #                     ssh_key=ssh_key['name'])
-
-    #         response = requests.post(ENDPOINT + 'instances',
-    #                                  headers={'api-key': self.api_key},
-    #                                  json=body)
-    #         raise_yotta_error(response)
-    #         instance_id = response.json().get('id')
-    #         instance_ids.append(instance_id)
-    #         time.sleep(1)
-
-    #     return instance_ids
-
-    # def list_ssh_keys(self):
-    #     response = requests.get(ENDPOINT + 'ssh_keys',
-    #                             headers={'api-key': self.api_key})
-    #     raise_yotta_error(response)
-    #     return response.json()
-
-    # def get_or_add_ssh_key(self, ssh_pub_key: str = '') -> Dict[str, str]:
-    #     """Add ssh key if not already added."""
-    #     ssh_keys = self.list_ssh_keys()
-    #     for key in ssh_keys:
-    #         if key['public_key'].strip().split()[:2] == ssh_pub_key.strip(
-    #         ).split()[:2]:
-    #             return {'name': key['name'], 'ssh_key': ssh_pub_key}
-    #     ssh_key_name = 'skypilot-' + get_key_suffix()
-    #     response = requests.post(
-    #         ENDPOINT + 'ssh_keys',
-    #         headers={'api-key': self.api_key},
-    #         json=dict(name=ssh_key_name, public_key=ssh_pub_key),
-    #     )
-    #     raise_yotta_error(response)
-    #     return {'name': ssh_key_name, 'ssh_key': ssh_pub_key}
-
-    # @annotations.lru_cache(scope='global')
-    # def list_regions(self):
-    #     plans = self.get_plans()
-
-    #     def get_regions(plans: List) -> dict:
-    #         """Return a list of regions where the plan is available."""
-    #         regions = {}
-    #         for plan in plans:
-    #             for region in plan.get('regions', []):
-    #                 regions[region] = region
-    #         return regions
-
-    #     regions = get_regions(plans)
-    #     return regions
 
     def terminate_instances(self, instance_id: int):
         """Terminate instances."""
