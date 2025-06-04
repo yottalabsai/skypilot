@@ -4,6 +4,7 @@ import base64
 import enum
 import json
 import os
+import uuid
 from typing import Any, Dict, List, Optional
 
 from sky import sky_logging
@@ -39,6 +40,8 @@ class CloudType(enum.Enum):
     SECURE = 1
     COMMUNITY = 2
 
+def get_key_suffix():
+    return str(uuid.uuid4()).replace('-', '')[:8]
 
 def _load_credentials() -> tuple[str, str]:
     """Reads the credentials file and returns userId and apikey."""
@@ -250,5 +253,33 @@ class YottaClient:
                                    json=request_data)
         raise_yotta_error(response)
         return response.json()
+
+    def list_ssh_keys(self):
+        """list ssh keys."""
+        url = f"{ENDPOINT}/compute/keypair/list"
+        response = requests.get(url= url,
+                                   headers={API_KEY_HEADER: self.api_key})
+        raise_yotta_error(response)
+        response_json = response.json()
+        return response_json["data"]
+
+    def get_or_add_ssh_key(self, public_key: str = '') -> Dict[str, str]:
+        """Add ssh key if not already added."""
+        ssh_keys = self.list_ssh_keys()
+        for key in ssh_keys:
+            if key['publicKey'].strip().split()[:2] == public_key.strip(
+            ).split()[:2]:
+                return {'name': key['nickname'], 'ssh_key': public_key}
+        ssh_key_name = 'skypilot-' + get_key_suffix()
+        url = f"{ENDPOINT}/compute/create/publicKey"
+        request_data = {
+            "nickname": ssh_key_name,
+            "publicKey": public_key
+        }
+        response = requests.post(url=url,
+                                 headers={API_KEY_HEADER: self.api_key},
+                                 json=request_data)
+        raise_yotta_error(response)
+        return {'name': ssh_key_name, 'ssh_key': public_key}
 
 yotta_client = YottaClient()
