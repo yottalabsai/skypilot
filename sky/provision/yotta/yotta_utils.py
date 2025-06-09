@@ -14,8 +14,9 @@ import requests
 logger = sky_logging.init_logger(__name__)
 
 CREDENTIALS_FILE_PATH = os.path.expanduser('~/.yotta/credentials')
-# ENDPOINT = "https://console.yottalabs.ai/sdk/api"
-ENDPOINT = "http://127.0.0.1:10001/sdk/api"
+# ENDPOINT = "https://api.yottalabs.ai/sdk/api"
+# ENDPOINT = "http://127.0.0.1:10001/sdk/api"
+ENDPOINT = "https://api.dev.yottalabs.ai/sdk/api"
 API_KEY_HEADER = 'X-API-KEY'
 
 GPU_NAME_MAP = {
