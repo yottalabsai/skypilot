@@ -110,29 +110,29 @@ def run_instances(region: str, cluster_name_on_cloud: str,
         if head_instance_id is None:
             head_instance_id = instance_id
 
-        # Wait for instances to be ready.
-        while True:
-            instances = _filter_instances(cluster_name_on_cloud, [PodStatusEnum.RUNNING])
-            ready_instance_cnt = 0
-            for instance_id, instance in instances.items():
-                port = yotta_utils.get_ssh_port(instance)
-                if port is not None and port.get('healthy'):
-                    ready_instance_cnt += 1
-            logger.info('Waiting for instances to be ready: '
-                        f'({ready_instance_cnt}/{config.count}).')
-            if ready_instance_cnt == config.count:
-                break
+    # Wait for instances to be ready.
+    while True:
+        instances = _filter_instances(cluster_name_on_cloud, [PodStatusEnum.RUNNING])
+        ready_instance_cnt = 0
+        for instance_id, instance in instances.items():
+            port = yotta_utils.get_ssh_port(instance)
+            if port is not None and port.get('healthy'):
+                ready_instance_cnt += 1
+        logger.info('Waiting for instances to be ready: '
+                    f'({ready_instance_cnt}/{config.count}).')
+        if ready_instance_cnt == config.count:
+            break
 
-            time.sleep(POLL_INTERVAL)
-        assert head_instance_id is not None, 'head_instance_id should not be None'
-        return common.ProvisionRecord(
-            provider_name='yotta',
-            cluster_name=cluster_name_on_cloud,
-            region=region,
-            zone=config.provider_config['availability_zone'],
-            head_instance_id=head_instance_id,
-            resumed_instance_ids=[],
-            created_instance_ids=created_instance_ids)
+        time.sleep(POLL_INTERVAL)
+    assert head_instance_id is not None, 'head_instance_id should not be None'
+    return common.ProvisionRecord(
+        provider_name='yotta',
+        cluster_name=cluster_name_on_cloud,
+        region=region,
+        zone=config.provider_config['availability_zone'],
+        head_instance_id=head_instance_id,
+        resumed_instance_ids=[],
+        created_instance_ids=created_instance_ids)
 
     
 def wait_instances(region: str, cluster_name_on_cloud: str,
@@ -193,6 +193,7 @@ def get_cluster_info(
         head_instance_id=head_instance_id,
         provider_name='yotta',
         provider_config=provider_config,
+        custom_ray_options={'use_external_ip': True},
     )
     
     
