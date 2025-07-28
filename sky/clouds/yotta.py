@@ -27,9 +27,6 @@ class Yotta(clouds.Cloud):
     _REPR = 'Yotta'
     _CLOUD_UNSUPPORTED_FEATURES = {
         clouds.CloudImplementationFeatures.STOP: 'Stopping not supported.',
-        clouds.CloudImplementationFeatures.MULTI_NODE:
-            ('Multi-node not supported yet, as the interconnection among nodes '
-             'are non-trivial on Yotta.'),
         clouds.CloudImplementationFeatures.CUSTOM_DISK_TIER:
             ('Customizing disk tier is not supported yet on Yotta.'),
         clouds.CloudImplementationFeatures.STORAGE_MOUNTING:
