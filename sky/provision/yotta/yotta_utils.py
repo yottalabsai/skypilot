@@ -81,7 +81,7 @@ def get_ssh_port(instance):
 def raise_yotta_error(response: 'requests.Response') -> None:
     """Raise YottaAPIError if appropriate."""
     status_code = response.status_code
-    logger.info(f"response: {response.status_code} - {response.text}")
+    logger.debug(f"response: {response.status_code} - {response.text}")
     try:
         resp_json = response.json()
     except (KeyError, json.decoder.JSONDecodeError) as e:
@@ -116,12 +116,12 @@ class YottaClient:
     
     def check_api_key(self) -> bool:
         url = f"{ENDPOINT}/key/check?userId={self.user_id}"
-        logger.info(f"Checking api key for user {self.user_id}")
+        logger.debug(f"Checking api key for user {self.user_id}")
         response = requests.get(url, headers={API_KEY_HEADER: self.api_key})
         raise_yotta_error(response)
         check_result = response.json()
         # True if api key is valid
-        logger.info(f"Api key check result: {check_result}")
+        logger.debug(f"Api key check result: {check_result}")
         return check_result['data']
 
     def list_instances(self, cluster_name_on_cloud: str) -> Dict[str, Dict[str, Any]]: 
