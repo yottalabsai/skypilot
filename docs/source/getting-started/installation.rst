@@ -21,7 +21,7 @@ Install SkyPilot using pip:
           conda create -y -n sky python=3.10
           conda activate sky
 
-          # Choose your cloud:
+          # Choose your infra:
 
           pip install "skypilot[kubernetes]"
           pip install "skypilot[aws]"
@@ -50,7 +50,7 @@ Install SkyPilot using pip:
           conda create -y -n sky python=3.10
           conda activate sky
 
-          # Choose your cloud:
+          # Choose your infra:
 
           pip install "skypilot-nightly[kubernetes]"
           pip install "skypilot-nightly[aws]"
@@ -83,7 +83,7 @@ Install SkyPilot using pip:
           git clone https://github.com/skypilot-org/skypilot.git
           cd skypilot
 
-          # Choose your cloud:
+          # Choose your infra:
 
           pip install -e ".[kubernetes]"
           pip install -e ".[aws]"
@@ -132,10 +132,10 @@ Installing via ``uv`` is also supported:
 .. code-block:: shell
 
   uv venv --seed --python 3.10
-  uv pip install --prerelease allow 'azure-cli>=2.65.0'
-  # Explicitly install prerelease dependency to work around https://docs.astral.sh/uv/pip/compatibility/#pre-release-compatibility
-  # Optionally only install specific clouds - e.g. 'skypilot[aws,gcp,kubernetes]'
-  uv pip install 'omegaconf>=2.4.0dev3' 'skypilot[all]'
+  uv pip install "skypilot[kubernetes,aws,gcp]"
+  # Azure CLI has an issue with uv, and requires '--prerelease allow'.
+  uv pip install --prerelease allow azure-cli
+  uv pip install "skypilot[all]"
 
 
 Alternatively, we also provide a :ref:`Docker image <docker-image>` as a quick way to try out SkyPilot.
@@ -325,8 +325,9 @@ By default, the provisioned nodes will be in the root `compartment <https://docs
 .. code-block:: text
 
   oci:
-    default:
-      compartment_ocid: ocid1.compartment.oc1..aaaaaaaa......
+    region_configs:
+      default:
+        compartment_ocid: ocid1.compartment.oc1..aaaaaaaa......
 
 
 Lambda Cloud
@@ -357,7 +358,8 @@ Vast
 .. code-block:: shell
 
   pip install "vastai-sdk>=0.1.12"
-  echo "<your_api_key_here>" > ~/.vast_api_key
+  mkdir -p ~/.config/vastai
+  echo "<your_api_key_here>" > ~/.config/vastai/vast_api_key
 
 RunPod
 ~~~~~~~~~~
@@ -502,6 +504,8 @@ Here is an example of configuration within the credential file:
         clusters: []
 
 After configuring the vSphere credentials, ensure that the necessary preparations for vSphere are completed. Please refer to this guide for more information: :ref:`Cloud Preparation for vSphere <cloud-prepare-vsphere>`
+
+.. _cloudflare-r2-installation:
 
 Cloudflare R2
 ~~~~~~~~~~~~~~~~~~

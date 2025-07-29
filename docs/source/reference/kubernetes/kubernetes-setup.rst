@@ -108,11 +108,15 @@ Step 2 - Set up GPU support
 
 To utilize GPUs on Kubernetes, your cluster must:
 
-1. Have the ``nvidia.com/gpu`` **resource** available on all GPU nodes and have ``nvidia`` as the default runtime for your container engine.
+-  If using NVIDIA GPUs, have the ``nvidia.com/gpu`` **resource** available on all GPU nodes and have ``nvidia`` as the default runtime for your container engine.
 
    * If you are following :ref:`our deployment guides <kubernetes-deployment>` or using GKE or EKS, this would already be set up. Else, install the `Nvidia GPU Operator <https://docs.nvidia.com/datacenter/cloud-native/gpu-operator/latest/getting-started.html#install-nvidia-gpu-operator>`_.
 
-2. Have a **label on each node specifying the GPU type**. See :ref:`Setting up GPU labels <kubernetes-gpu-labels>` for more details.
+- If using AMD GPUs, have the ``amd.com/gpu`` **resource** available on all GPU nodes and install the AMD GPU Operator.
+
+  * Follow the instructions in :ref:`AMD GPUs on Kubernetes <kubernetes-amd-gpu>` to install the AMD GPU Operator.
+
+- Have a **label on each node specifying the GPU type**. See :ref:`Setting up GPU labels <kubernetes-gpu-labels>` for more details.
 
 
 .. tip::
@@ -180,6 +184,10 @@ If none of the above labels are present on your cluster, we provide a convenienc
 
 .. note::
 
+    Automatically labelling AMD GPUs is not supported at this moment. Please follow the instructions in "Manually labelling nodes" section below.
+
+.. note::
+
     If the GPU labelling process fails, you can run ``python -m sky.utils.kubernetes.gpu_labeler --cleanup`` to clean up the failed jobs.
 
 Manually labelling nodes
@@ -187,7 +195,7 @@ Manually labelling nodes
 
 You can also manually label nodes, if required. Labels must be of the format ``skypilot.co/accelerator: <gpu_name>`` where ``<gpu_name>`` is the lowercase name of the GPU.
 
-For example, a node with H100 GPUs must have a label :code:`skypilot.co/accelerator: h100`.
+For example, a node with H100 GPUs must have a label :code:`skypilot.co/accelerator: h100`, and a node with MI300 GPUs must have a label :code:`skypilot.co/accelerator: mi300`.
 
 Use the following command to label a node:
 
@@ -217,7 +225,7 @@ You can also check the GPUs available on your nodes by running:
 
 .. code-block:: console
 
-    $ sky show-gpus --cloud k8s
+    $ sky show-gpus --infra k8s
     Kubernetes GPUs
     GPU   REQUESTABLE_QTY_PER_NODE  UTILIZATION
     L4    1, 2, 4                   12 of 12 free
@@ -397,6 +405,44 @@ Examples:
                      hostPath:
                        path: /path/on/host/nvme
                        type: Directory
+
+    .. tab-item:: Nebius shared filesystem
+      :name: kubernetes-volumes-nebius-shared-filesystem
+
+      When creating a node group on the Nebius console, attach your desired shared file system to the node group (``Create Node Group`` -> ``Attach shared filesystem``):
+
+      * Ensure ``Auto mount`` is enabled.
+      * Note the ``Mount tag`` (e.g. ``filesystem-d0``).
+
+      .. image:: ../../images/screenshots/nebius/nebius-k8s-attach-fs.png
+        :width: 50%
+        :align: center
+
+      Nebius will automatically mount the shared filesystem to hosts in the node group. You can then use a ``hostPath`` volume to mount the shared filesystem to your SkyPilot pods.
+
+      **Per-task configuration:**
+
+      .. code-block:: yaml
+
+           # task.yaml
+           run: |
+             echo "Hello, world!" > /mnt/nfs/hello.txt
+             ls -la /mnt/nfs
+
+           config:
+             kubernetes:
+               pod_config:
+                 spec:
+                   containers:
+                     - volumeMounts:
+                         - mountPath: /mnt/nfs
+                           name: nebius-sharedfs
+                   volumes:
+                     - name: nebius-sharedfs
+                       hostPath:
+                         path: /mnt/<mount_tag> # e.g. /mnt/filesystem-d0
+                         type: Directory
+
 
 .. note::
 

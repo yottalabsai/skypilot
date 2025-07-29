@@ -191,6 +191,12 @@ class InconsistentHighAvailabilityError(Exception):
     pass
 
 
+class InconsistentConsolidationModeError(Exception):
+    """Raised when the consolidation mode property in the user config
+    is inconsistent with the actual cluster."""
+    pass
+
+
 class ProvisionPrechecksError(Exception):
     """Raised when a managed job fails prechecks before provision.
 
@@ -222,7 +228,7 @@ class ManagedJobReachedMaxRetriesError(Exception):
 class ManagedJobStatusError(Exception):
     """Raised when a managed job task status update is invalid.
 
-    For instance, a RUNNING job cannot become SUBMITTED.
+    For instance, a RUNNING job cannot become PENDING.
     """
     pass
 
@@ -381,6 +387,7 @@ class FetchClusterInfoError(Exception):
     class Reason(enum.Enum):
         HEAD = 'HEAD'
         WORKER = 'WORKER'
+        UNKNOWN = 'UNKNOWN'
 
     def __init__(self, reason: Reason) -> None:
         super().__init__()
@@ -488,8 +495,23 @@ class ApiServerConnectionError(RuntimeError):
             f'Try: curl {server_url}/api/health')
 
 
+class ApiServerAuthenticationError(RuntimeError):
+    """Raised when authentication is required for the API server."""
+
+    def __init__(self, server_url: str):
+        super().__init__(
+            f'Authentication required for SkyPilot API server at {server_url}. '
+            f'Please run:\n'
+            f'  sky api login -e {server_url}')
+
+
 class APIVersionMismatchError(RuntimeError):
     """Raised when the API version mismatch."""
+    pass
+
+
+class APINotSupportedError(RuntimeError):
+    """Raised when the API is not supported by the remote peer."""
     pass
 
 
@@ -570,6 +592,62 @@ class JobExitCode(enum.IntEnum):
         return cls.FAILED
 
 
+class ExecutionRetryableError(Exception):
+    """Raised when task execution fails and should be retried."""
+
+    def __init__(self, message: str, hint: str,
+                 retry_wait_seconds: int) -> None:
+        super().__init__(message)
+        self.hint = hint
+        self.retry_wait_seconds = retry_wait_seconds
+
+    def __reduce__(self):
+        # Make sure the exception is picklable
+        return (self.__class__, (str(self), self.hint, self.retry_wait_seconds))
+
+
+class ExecutionPoolFullError(Exception):
+    """Raised when the execution pool is full."""
+
+
 class RequestAlreadyExistsError(Exception):
     """Raised when a request is already exists."""
+    pass
+
+
+class PermissionDeniedError(Exception):
+    """Raised when a user does not have permission to access a resource."""
+    pass
+
+
+class VolumeNotFoundError(Exception):
+    """Raised when a volume is not found."""
+    pass
+
+
+class VolumeTopologyConflictError(Exception):
+    """Raised when the there is conflict in the volumes and compute topology"""
+    pass
+
+
+class ServerTemporarilyUnavailableError(Exception):
+    """Raised when the server is temporarily unavailable."""
+    pass
+
+
+class RestfulPolicyError(Exception):
+    """Raised when failed to call a RESTful policy."""
+    pass
+
+
+class GitError(Exception):
+    """Raised when a git operation fails."""
+    pass
+
+
+class RequestInterruptedError(Exception):
+    """Raised when a request is interrupted by the server.
+    Client is expected to retry the request immediately when
+    this error is raised.
+    """
     pass

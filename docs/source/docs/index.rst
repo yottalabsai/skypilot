@@ -25,6 +25,19 @@ Welcome to SkyPilot!
    <script async defer src="https://buttons.github.io/buttons.js"></script>
    </p>
 
+
+.. grid:: 1 1 1 1
+    :gutter: 3
+
+
+    .. grid-item-card::
+        :link: https://demo.skypilot.co/dashboard/
+        :text-align: center
+
+        🌟 **SkyPilot Demo** 🌟: Click to see a 1-minute tour
+
+
+
 SkyPilot is an open-source framework for running AI and batch workloads on any infra.
 
 
@@ -53,16 +66,16 @@ SkyPilot **cuts your cloud costs & maximizes GPU availability**:
    var replayTimeout;
    var isPaused = false;
    var isEnded = false;
-   
+
    function pauseAndReplay(video) {
      // Clear any existing timeout first
      clearTimeout(replayTimeout);
-     
+
      // Mark the video as ended
      isEnded = true;
      // Update the pause button to show replay
      updatePauseButton();
-     
+
      replayTimeout = setTimeout(function() {
         replayVideo(video);
      }, 10000); // 10 second gap
@@ -87,7 +100,7 @@ SkyPilot **cuts your cloud costs & maximizes GPU availability**:
       isPaused = false;
       updatePauseButton();
    }
-   
+
    function togglePlayPause(video) {
       if (isEnded) {
          // If video has ended, replay it
@@ -106,7 +119,7 @@ SkyPilot **cuts your cloud costs & maximizes GPU availability**:
          updatePauseButton();
       }
    }
-   
+
    function updatePauseButton() {
       var pauseBtn = document.getElementById('pause-btn');
       if (isEnded) {
@@ -142,11 +155,11 @@ SkyPilot **cuts your cloud costs & maximizes GPU availability**:
        transition: opacity 0.3s;
        font-size: 18px;
      }
-     
+
      .video-control-btn:hover {
        opacity: 1;
      }
-     
+
      .video-control-btn::after {
        content: attr(data-tooltip);
        position: absolute;
@@ -162,7 +175,7 @@ SkyPilot **cuts your cloud costs & maximizes GPU availability**:
        visibility: hidden;
        transition: opacity 0.3s;
      }
-     
+
      .video-control-btn:hover::after {
        opacity: 1;
        visibility: visible;
@@ -285,6 +298,7 @@ Read the research:
    :caption: Data
 
    ../reference/storage
+   ../reference/volumes
    ../examples/syncing-code-artifacts
 
 .. toctree::
@@ -293,7 +307,7 @@ Read the research:
    :caption: User Guides
 
    ../reference/async
-   Secrets and Environment Variables <../running-jobs/environment-variables>
+   ../running-jobs/environment-variables
    Docker Containers <../examples/docker-containers>
    ../examples/ports
    ../reference/logging
@@ -305,9 +319,11 @@ Read the research:
    :caption: Administrator Guides
 
    ../reference/api-server/api-server
+   ../reference/auth
+   ../admin/workspaces
    ../cloud-setup/cloud-permissions/index
-   ../cloud-setup/quota
    Admin Policies <../cloud-setup/policy>
+   External Logging Storage <../cloud-setup/external-logging>
 
 .. toctree::
    :hidden:
@@ -318,5 +334,6 @@ Read the research:
    CLI <../reference/cli>
    ../reference/api
    ../reference/config
+   SkyPilot State <../reference/architecture/state>
    ../developers/index
 

@@ -2,7 +2,9 @@
 
 from sky.clouds.cloud import Cloud
 from sky.clouds.cloud import cloud_in_iterable
+from sky.clouds.cloud import CloudCapability
 from sky.clouds.cloud import CloudImplementationFeatures
+from sky.clouds.cloud import DummyCloud
 from sky.clouds.cloud import OpenPortsVersion
 from sky.clouds.cloud import ProvisionerVersion
 from sky.clouds.cloud import Region
@@ -17,6 +19,7 @@ from sky.clouds.cudo import Cudo
 from sky.clouds.do import DO
 from sky.clouds.fluidstack import Fluidstack
 from sky.clouds.gcp import GCP
+from sky.clouds.hyperbolic import Hyperbolic
 from sky.clouds.ibm import IBM
 from sky.clouds.kubernetes import Kubernetes
 from sky.clouds.lambda_cloud import Lambda
@@ -25,6 +28,7 @@ from sky.clouds.oci import OCI
 from sky.clouds.paperspace import Paperspace
 from sky.clouds.runpod import RunPod
 from sky.clouds.scp import SCP
+from sky.clouds.ssh import SSH
 from sky.clouds.vast import Vast
 from sky.clouds.vsphere import Vsphere
 from sky.clouds.yotta import Yotta
@@ -35,6 +39,7 @@ __all__ = [
     'Azure',
     'Cloud',
     'Cudo',
+    'DummyCloud',
     'GCP',
     'Lambda',
     'DO',
@@ -46,6 +51,7 @@ __all__ = [
     'Vsphere',
     'Yotta',
     'Kubernetes',
+    'SSH',
     'CloudImplementationFeatures',
     'Region',
     'Zone',
@@ -53,6 +59,7 @@ __all__ = [
     'StatusVersion',
     'Fluidstack',
     'Nebius',
+    'Hyperbolic',
     # Utility functions
     'cloud_in_iterable',
 ]

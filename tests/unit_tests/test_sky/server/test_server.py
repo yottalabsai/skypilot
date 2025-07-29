@@ -12,6 +12,7 @@ import uvicorn
 
 from sky.server import server
 from sky.utils import common_utils
+from sky.utils import config_utils
 from sky.utils import context
 
 
@@ -113,7 +114,7 @@ async def test_validate():
     with mock.patch('sky.server.server.dag_utils.load_chain_dag_from_yaml_str',
                    return_value=mock_dag), \
          mock.patch('sky.server.server.admin_policy_utils.apply',
-                   return_value=(mock_dag, None)), \
+                   return_value=(mock_dag, config_utils.Config())), \
          mock.patch.object(mock_dag, 'validate') as mock_validate:
         # Call validate endpoint
         await server.validate(mock_validate_body)
@@ -125,7 +126,7 @@ async def test_validate():
     with mock.patch('sky.server.server.dag_utils.load_chain_dag_from_yaml_str',
                    return_value=mock_dag), \
          mock.patch('sky.server.server.admin_policy_utils.apply',
-                   return_value=(mock_dag, None)), \
+                   return_value=(mock_dag, config_utils.Config())), \
          mock.patch.object(mock_dag, 'validate',
                           side_effect=ValueError(error_msg)):
         with pytest.raises(fastapi.HTTPException) as exc_info:
@@ -144,7 +145,7 @@ async def test_validate():
     with mock.patch('sky.server.server.dag_utils.load_chain_dag_from_yaml_str',
                    return_value=mock_dag), \
          mock.patch('sky.server.server.admin_policy_utils.apply',
-                   return_value=(mock_dag, None)), \
+                   return_value=(mock_dag, config_utils.Config())), \
          mock.patch.object(mock_dag, 'validate',
                           side_effect=slow_validate):
         # Start validation in background
@@ -211,3 +212,49 @@ async def test_logs():
             request_id=mock.ANY,
             logs_path=mock_request_task.log_path,
             background_tasks=mock_background_tasks)
+
+
+@mock.patch('sky.utils.context_utils.hijack_sys_attrs')
+@mock.patch('asyncio.run')
+def test_server_run_uses_uvloop(mock_asyncio_run, mock_hijack_sys_attrs):
+    """Test that Server.run uses uvloop event loop policy."""
+    from sky.server.uvicorn import Server
+
+    config = uvicorn.Config(app='sky.server.server:app',
+                            host='127.0.0.1',
+                            port=8000)
+    server_instance = Server(config)
+    original_setup = config.setup_event_loop
+
+    uvloop_policy_set = False
+    uvloop_available = True
+
+    def setup_and_check():
+        # Call original setup to configure event loop
+        original_setup()
+        # Check if uvloop policy is now set
+        nonlocal uvloop_policy_set, uvloop_available
+        import asyncio
+        try:
+            import uvloop
+            policy = asyncio.get_event_loop_policy()
+            uvloop_policy_set = isinstance(policy, uvloop.EventLoopPolicy)
+        except ImportError:
+            # uvloop not available
+            uvloop_available = False
+
+    with mock.patch.object(config,
+                           'setup_event_loop',
+                           side_effect=setup_and_check):
+        # Call server.run
+        server_instance.run()
+
+    mock_asyncio_run.assert_called_once()
+
+    # Check uvloop policy was set (if uvloop is available)
+    if uvloop_available:
+        assert uvloop_policy_set, (
+            "Expected uvloop event loop policy to be set when uvloop "
+            "is available")
+    else:
+        pytest.skip("uvloop not available, skipping uvloop policy check")

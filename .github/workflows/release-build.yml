@@ -9,17 +9,23 @@ on:
         description: 'Release version (e.g., 0.9.0)'
         required: false
         type: string
+      skip_version_checks:
+        description: 'Skip version verification steps'
+        required: false
+        type: boolean
+        default: false
 
 jobs:
   release-build:
     runs-on: ubuntu-latest
     outputs:
       test_branch: ${{ steps.create_test_branch.outputs.test_branch }}
-      smoke_tests_json: ${{ steps.trigger_smoke_tests.outputs.json }}
-      quicktest_json: ${{ steps.trigger_quicktest_core.outputs.json }}
-      release_test_json: ${{ steps.trigger_release_tests.outputs.json }}
       release_branch: ${{ steps.create_release_branch.outputs.release_branch }}
       release_version: ${{ steps.determine_version.outputs.release_version }}
+      new_commit_sha: ${{ steps.create_test_branch.outputs.new_commit_sha }}
+      previous_release_branch: ${{ steps.find_previous_release_branch.outputs.previous_release_branch }}
+      previous_minor_release_branch: ${{ steps.find_previous_release_branch.outputs.previous_minor_release_branch }}
+
     steps:
       - name: Clone repository
         uses: actions/checkout@v3
@@ -51,6 +57,20 @@ jobs:
 
           # Output the latest PyPI version for subsequent steps
           echo "latest_pypi_version=${LATEST_PYPI_VERSION}" >> $GITHUB_OUTPUT
+
+          # Find the latest version of the previous minor version
+          MAJOR=$(echo $LATEST_PYPI_VERSION | cut -d. -f1)
+          MINOR=$(echo $LATEST_PYPI_VERSION | cut -d. -f2)
+          PREVIOUS_MINOR=$((MINOR - 1))
+          PREVIOUS_MINOR_LATEST_VERSION=$(curl -s https://pypi.org/pypi/skypilot/json | jq -r ".releases | keys[]" | grep "^${MAJOR}\.${PREVIOUS_MINOR}\." | sort -V | tail -n 1)
+          if [ -n "${PREVIOUS_MINOR_LATEST_VERSION}" ]; then
+            PREVIOUS_MINOR_RELEASE_BRANCH="releases/${PREVIOUS_MINOR_LATEST_VERSION}"
+            echo "previous_minor_release_branch=${PREVIOUS_MINOR_RELEASE_BRANCH}" >> $GITHUB_OUTPUT
+            echo "Determined previous minor release branch: ${PREVIOUS_MINOR_RELEASE_BRANCH}"
+          else
+            echo "Could not determine previous minor release branch."
+            echo "previous_minor_release_branch=" >> $GITHUB_OUTPUT
+          fi
 
       - name: Get current sky api version
         id: get_current_sky_api_version
@@ -134,6 +154,7 @@ jobs:
 
       - name: Verify release version > latest PyPI version
         id: verify_version
+        if: ${{ !github.event.inputs.skip_version_checks }}
         run: |
           RELEASE_VERSION="${{ steps.determine_version.outputs.release_version }}"
           echo "Validated release version: ${RELEASE_VERSION}"
@@ -164,6 +185,7 @@ jobs:
 
       - name: Verify API Version Compatibility
         id: verify_api_version
+        if: ${{ !github.event.inputs.skip_version_checks }}
         run: |
           RELEASE_VERSION="${{ steps.determine_version.outputs.release_version }}"
           LATEST_PYPI_VERSION="${{ steps.find_previous_release_branch.outputs.latest_pypi_version }}"
@@ -240,9 +262,8 @@ jobs:
           git checkout ${BRANCH_NAME}
 
           # Make version changes
-          echo "Updating __version__ in sky/__init__.py and Dockerfile to ${RELEASE_VERSION}..."
+          echo "Updating __version__ in sky/__init__.py to ${RELEASE_VERSION}..."
           sed -i "s/__version__ = '.*'/__version__ = '${RELEASE_VERSION}'/g" sky/__init__.py
-          sed -i "s/skypilot-nightly\[all\]/skypilot[all]==${RELEASE_VERSION}/g" Dockerfile
           sed -i "s/image: berkeleyskypilot\/skypilot:.*/image: berkeleyskypilot\/skypilot:${RELEASE_VERSION}/g" charts/skypilot/values.yaml
 
           # Create the test branch from the *current* state (base branch with version bump)
@@ -252,7 +273,6 @@ jobs:
 
           # Commit the version change on the new test branch
           git add sky/__init__.py
-          git add Dockerfile
           git add charts/skypilot/values.yaml
           git commit -m "Release ${RELEASE_VERSION}"
 
@@ -266,88 +286,66 @@ jobs:
           git push -f origin ${TEST_BRANCH}
           echo "test_branch=${TEST_BRANCH}" >> $GITHUB_OUTPUT
 
-      # Trigger Buildkite smoke tests
-      - name: Trigger Full Smoke Tests
-        id: trigger_smoke_tests
-        uses: buildkite/trigger-pipeline-action@v2.3.0
-        with:
-          buildkite_api_access_token: ${{ secrets.BUILDKITE_TOKEN }}
-          pipeline: "skypilot-1/full-smoke-tests-run"
-          branch: "${{ steps.create_test_branch.outputs.test_branch }}"
-          commit: "${{ steps.create_test_branch.outputs.new_commit_sha }}"
-          message: "Release ${{ steps.determine_version.outputs.release_version }}"
-          ignore_pipeline_branch_filter: true
-
-      # Trigger Buildkite quicktest-core
-      - name: Trigger Quicktest Core
-        id: trigger_quicktest_core
-        uses: buildkite/trigger-pipeline-action@v2.3.0
-        with:
-          buildkite_api_access_token: ${{ secrets.BUILDKITE_TOKEN }}
-          pipeline: "skypilot-1/quicktest-core"
-          branch: "${{ steps.create_test_branch.outputs.test_branch }}"
-          commit: "${{ steps.create_test_branch.outputs.new_commit_sha }}"
-          message: "Release ${{ steps.determine_version.outputs.release_version }}"
-          ignore_pipeline_branch_filter: true
-          build_env_vars: '{"ARGS": "--base-branch ${{ steps.find_previous_release_branch.outputs.previous_release_branch }}"}'
-
-      # Trigger Buildkite release tests
-      - name: Trigger Release Tests
-        id: trigger_release_tests
-        uses: buildkite/trigger-pipeline-action@v2.3.0
-        with:
-          buildkite_api_access_token: ${{ secrets.BUILDKITE_TOKEN }}
-          pipeline: "skypilot-1/release"
-          branch: "${{ steps.create_test_branch.outputs.test_branch }}"
-          commit: "${{ steps.create_test_branch.outputs.new_commit_sha }}"
-          message: "Release ${{ steps.determine_version.outputs.release_version }}"
-          ignore_pipeline_branch_filter: true
-
-  # Call extract-buildkite workflow for each job
-  extract-smoke-tests:
+  smoke-tests:
     needs: release-build
-    uses: ./.github/workflows/extract-buildkite.yml
+    uses: ./.github/workflows/buildkite-trigger-wait.yml
     with:
-      json_data: ${{ needs.release-build.outputs.smoke_tests_json }}
-
-  extract-quicktest:
-    needs: release-build
-    uses: ./.github/workflows/extract-buildkite.yml
-    with:
-      json_data: ${{ needs.release-build.outputs.quicktest_json }}
-
-  extract-release-test:
-    needs: release-build
-    uses: ./.github/workflows/extract-buildkite.yml
-    with:
-      json_data: ${{ needs.release-build.outputs.release_test_json }}
-
-  wait-for-smoke-tests:
-    needs: [release-build, extract-smoke-tests]
-    uses: ./.github/workflows/wait-for-buildkite.yml
-    with:
-      organization: "skypilot-1"
+      commit: ${{ needs.release-build.outputs.new_commit_sha }}
+      branch: ${{ needs.release-build.outputs.test_branch }}
+      message: "Release ${{ needs.release-build.outputs.release_version }}"
       pipeline: "full-smoke-tests-run"
-      build_number: ${{ needs.extract-smoke-tests.outputs.build_number }}
       timeout_minutes: 240
-      fail_on_buildkite_failure: false
+      wait: true
+      fail_on_buildkite_failure: true
     secrets:
       BUILDKITE_TOKEN: ${{ secrets.BUILDKITE_TOKEN }}
 
-  wait-for-quicktest-core:
-    needs: [release-build, extract-quicktest]
-    uses: ./.github/workflows/wait-for-buildkite.yml
+  quicktest-core:
+    needs: release-build
+    uses: ./.github/workflows/buildkite-trigger-wait.yml
     with:
-      organization: "skypilot-1"
+      commit: ${{ needs.release-build.outputs.new_commit_sha }}
+      branch: ${{ needs.release-build.outputs.test_branch }}
+      message: "Release ${{ needs.release-build.outputs.release_version }}"
       pipeline: "quicktest-core"
-      build_number: ${{ needs.extract-quicktest.outputs.build_number }}
+      build_env_vars: '{"ARGS": "--base-branch ${{ needs.release-build.outputs.previous_release_branch }}"}'
       timeout_minutes: 180
+      wait: true
+      fail_on_buildkite_failure: true
+    secrets:
+      BUILDKITE_TOKEN: ${{ secrets.BUILDKITE_TOKEN }}
+
+  quicktest-core-previous-minor:
+    needs: release-build
+    uses: ./.github/workflows/buildkite-trigger-wait.yml
+    with:
+      commit: ${{ needs.release-build.outputs.new_commit_sha }}
+      branch: ${{ needs.release-build.outputs.test_branch }}
+      message: "Release ${{ needs.release-build.outputs.release_version }} (vs previous minor)"
+      pipeline: "quicktest-core"
+      build_env_vars: '{"ARGS": "--base-branch ${{ needs.release-build.outputs.previous_minor_release_branch }}"}'
+      timeout_minutes: 180
+      wait: true
+      fail_on_buildkite_failure: true
+    secrets:
+      BUILDKITE_TOKEN: ${{ secrets.BUILDKITE_TOKEN }}
+
+  release-tests:
+    needs: release-build
+    uses: ./.github/workflows/buildkite-trigger-wait.yml
+    with:
+      commit: ${{ needs.release-build.outputs.new_commit_sha }}
+      branch: ${{ needs.release-build.outputs.test_branch }}
+      message: "Release ${{ needs.release-build.outputs.release_version }}"
+      pipeline: "release"
+      wait: false
       fail_on_buildkite_failure: false
     secrets:
       BUILDKITE_TOKEN: ${{ secrets.BUILDKITE_TOKEN }}
 
   create-pr:
-    needs: [release-build, wait-for-smoke-tests, wait-for-quicktest-core, extract-release-test, extract-smoke-tests, extract-quicktest]
+    needs: [release-build, smoke-tests, quicktest-core, quicktest-core-previous-minor, release-tests]
+    if: always() && needs.release-build.result == 'success'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
@@ -361,11 +359,11 @@ jobs:
           TEST_BRANCH: ${{ needs.release-build.outputs.test_branch }}
           RELEASE_BRANCH: ${{ needs.release-build.outputs.release_branch }}
           RELEASE_VERSION: ${{ needs.release-build.outputs.release_version }}
-          SMOKE_TEST_BUILD: ${{ needs.extract-smoke-tests.outputs.build_number }}
-          QUICKTEST_BUILD: ${{ needs.extract-quicktest.outputs.build_number }}
-          RELEASE_TEST_BUILD: ${{ needs.extract-release-test.outputs.build_number }}
+          SMOKE_TEST_BUILD: ${{ needs.smoke-tests.outputs.build_number }}
+          QUICKTEST_BUILD: ${{ needs.quicktest-core.outputs.build_number }}
+          QUICKTEST_PREV_MINOR_BUILD: ${{ needs.quicktest-core-previous-minor.outputs.build_number }}
+          RELEASE_TEST_BUILD: ${{ needs.release-tests.outputs.build_number }}
         run: |
-
           # Configure git
           git config --local user.email "action@github.com"
           git config --local user.name "GitHub Action"
@@ -374,8 +372,13 @@ jobs:
           PR_BODY="Release ${RELEASE_VERSION}
 
           Buildkite Test Links:
-          - [Full Smoke Tests](https://buildkite.com/skypilot-1/full-smoke-tests-run/builds/${SMOKE_TEST_BUILD}) - $([ "${{ needs.wait-for-smoke-tests.outputs.build_status }}" == "success" ] && echo "✅ Success" || echo "❌ Failed")
-          - [Quicktest Core](https://buildkite.com/skypilot-1/quicktest-core/builds/${QUICKTEST_BUILD}) - $([ "${{ needs.wait-for-quicktest-core.outputs.build_status }}" == "success" ] && echo "✅ Success" || echo "❌ Failed")
+          - [Full Smoke Tests](https://buildkite.com/skypilot-1/full-smoke-tests-run/builds/${SMOKE_TEST_BUILD}) - $([ "${{ needs.smoke-tests.outputs.build_status }}" == "success" ] && echo "✅ Success" || echo "❌ Failed")
+          - [Quicktest Core](https://buildkite.com/skypilot-1/quicktest-core/builds/${QUICKTEST_BUILD}) - $([ "${{ needs.quicktest-core.outputs.build_status }}" == "success" ] && echo "✅ Success" || echo "❌ Failed")"
+          if [ "${{ needs.quicktest-core-previous-minor.result }}" == "success" ] || [ "${{ needs.quicktest-core-previous-minor.result }}" == "failure" ]; then
+            PR_BODY="${PR_BODY}
+          - [Quicktest Core (vs Previous Minor)](https://buildkite.com/skypilot-1/quicktest-core/builds/${QUICKTEST_PREV_MINOR_BUILD}) - $([ "${{ needs.quicktest-core-previous-minor.outputs.build_status }}" == "success" ] && echo "✅ Success" || echo "❌ Failed")"
+          fi
+          PR_BODY="${PR_BODY}
           - [Release Tests](https://buildkite.com/skypilot-1/release/builds/${RELEASE_TEST_BUILD}) - ⏳ (not waiting for completion)
 
           *Release Tests may take up to 24 hours to complete and might fail due to resource constraints.*"

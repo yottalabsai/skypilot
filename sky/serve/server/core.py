@@ -14,9 +14,11 @@ from sky import backends
 from sky import exceptions
 from sky import execution
 from sky import sky_logging
+from sky import skypilot_config
 from sky import task as task_lib
 from sky.backends import backend_utils
-from sky.clouds.service_catalog import common as service_catalog_common
+from sky.catalog import common as service_catalog_common
+from sky.data import storage as storage_lib
 from sky.serve import constants as serve_constants
 from sky.serve import serve_state
 from sky.serve import serve_utils
@@ -27,6 +29,7 @@ from sky.utils import command_runner
 from sky.utils import common
 from sky.utils import common_utils
 from sky.utils import controller_utils
+from sky.utils import dag_utils
 from sky.utils import rich_utils
 from sky.utils import subprocess_utils
 from sky.utils import ux_utils
@@ -138,17 +141,36 @@ def up(
                              f'{constants.CLUSTER_NAME_VALID_REGEX}')
 
     serve_utils.validate_service_task(task)
+    dag = dag_utils.convert_entrypoint_to_dag(task)
+    dag.resolve_and_validate_volumes()
     # Always apply the policy again here, even though it might have been applied
     # in the CLI. This is to ensure that we apply the policy to the final DAG
     # and get the mutated config.
-    dag, mutated_user_config = admin_policy_utils.apply(
-        task, use_mutated_config_in_current_request=False)
+    dag, mutated_user_config = admin_policy_utils.apply(dag)
+    dag.pre_mount_volumes()
     task = dag.tasks[0]
 
     with rich_utils.safe_status(
             ux_utils.spinner_message('Initializing service')):
-        controller_utils.maybe_translate_local_file_mounts_and_sync_up(
-            task, task_type='serve')
+        # Handle file mounts using two-hop approach when cloud storage
+        # unavailable
+        storage_clouds = (
+            storage_lib.get_cached_enabled_storage_cloud_names_or_refresh())
+        force_disable_cloud_bucket = skypilot_config.get_nested(
+            ('serve', 'force_disable_cloud_bucket'), False)
+        if storage_clouds and not force_disable_cloud_bucket:
+            controller_utils.maybe_translate_local_file_mounts_and_sync_up(
+                task, task_type='serve')
+            local_to_controller_file_mounts = {}
+        else:
+            # Fall back to two-hop file_mount uploading when no cloud storage
+            if task.storage_mounts:
+                raise exceptions.NotSupportedError(
+                    'Cloud-based file_mounts are specified, but no cloud '
+                    'storage is available. Please specify local '
+                    'file_mounts only.')
+            local_to_controller_file_mounts = (
+                controller_utils.translate_local_file_mounts_to_two_hop(task))
 
     tls_template_vars = _rewrite_tls_credential_paths_and_get_tls_env_vars(
         service_name, task)
@@ -179,6 +201,7 @@ def up(
             'service_name': service_name,
             'controller_log_file': controller_log_file,
             'remote_user_config_path': remote_config_yaml_path,
+            'local_to_controller_file_mounts': local_to_controller_file_mounts,
             'modified_catalogs':
                 service_catalog_common.get_modified_catalog_file_mounts(),
             **tls_template_vars,
@@ -221,13 +244,15 @@ def up(
         # for the first time; otherwise it is a name conflict.
         # Since the controller may be shared among multiple users, launch the
         # controller with the API server's user hash.
-        with common.with_server_user_hash():
-            controller_job_id, controller_handle = execution.launch(
-                task=controller_task,
-                cluster_name=controller_name,
-                retry_until_up=True,
-                _disable_controller_check=True,
-            )
+        with common.with_server_user():
+            with skypilot_config.local_active_workspace_ctx(
+                    constants.SKYPILOT_DEFAULT_WORKSPACE):
+                controller_job_id, controller_handle = execution.launch(
+                    task=controller_task,
+                    cluster_name=controller_name,
+                    retry_until_up=True,
+                    _disable_controller_check=True,
+                )
 
         style = colorama.Style
         fore = colorama.Fore
@@ -295,6 +320,8 @@ def up(
             assert task.service is not None
             protocol = ('http'
                         if task.service.tls_credential is None else 'https')
+            socket_endpoint = socket_endpoint.replace('https://', '').replace(
+                'http://', '')
             endpoint = f'{protocol}://{socket_endpoint}'
 
         logger.info(
@@ -352,8 +379,7 @@ def update(
     # and get the mutated config.
     # TODO(cblmemo,zhwu): If a user sets a new skypilot_config, the update
     # will not apply the config.
-    dag, _ = admin_policy_utils.apply(
-        task, use_mutated_config_in_current_request=False)
+    dag, _ = admin_policy_utils.apply(task)
     task = dag.tasks[0]
 
     assert task.service is not None
@@ -715,6 +741,9 @@ def status(
             else:
                 protocol = ('https'
                             if service_record['tls_encrypted'] else 'http')
+                if endpoint is not None:
+                    endpoint = endpoint.replace('https://',
+                                                '').replace('http://', '')
                 service_record['endpoint'] = f'{protocol}://{endpoint}'
 
     return service_records
@@ -730,6 +759,7 @@ def tail_logs(
     target: ServiceComponentOrStr,
     replica_id: Optional[int] = None,
     follow: bool = True,
+    tail: Optional[int] = None,
 ) -> None:
     """Tails logs for a service.
 
@@ -795,11 +825,14 @@ def tail_logs(
             service_name,
             stream_controller=(
                 target == serve_utils.ServiceComponent.CONTROLLER),
-            follow=follow)
+            follow=follow,
+            tail=tail)
     else:
         assert replica_id is not None, service_name
-        code = serve_utils.ServeCodeGen.stream_replica_logs(
-            service_name, replica_id, follow)
+        code = serve_utils.ServeCodeGen.stream_replica_logs(service_name,
+                                                            replica_id,
+                                                            follow,
+                                                            tail=tail)
 
     # With the stdin=subprocess.DEVNULL, the ctrl-c will not directly
     # kill the process, so we need to handle it manually here.
@@ -824,6 +857,7 @@ def sync_down_logs(
     targets: Union[ServiceComponentOrStr, List[ServiceComponentOrStr],
                    None] = None,
     replica_ids: Optional[List[int]] = None,
+    tail: Optional[int] = None,
 ) -> str:
     """Sync down logs from the controller for the given service.
 
@@ -926,16 +960,22 @@ def sync_down_logs(
         if component == serve_utils.ServiceComponent.CONTROLLER:
             stream_logs_code = (
                 serve_utils.ServeCodeGen.stream_serve_process_logs(
-                    service_name, stream_controller=True, follow=False))
+                    service_name,
+                    stream_controller=True,
+                    follow=False,
+                    tail=tail))
         elif component == serve_utils.ServiceComponent.LOAD_BALANCER:
             stream_logs_code = (
                 serve_utils.ServeCodeGen.stream_serve_process_logs(
-                    service_name, stream_controller=False, follow=False))
+                    service_name,
+                    stream_controller=False,
+                    follow=False,
+                    tail=tail))
         elif component == serve_utils.ServiceComponent.REPLICA:
             replica_id = target.replica_id
             assert replica_id is not None, service_name
             stream_logs_code = serve_utils.ServeCodeGen.stream_replica_logs(
-                service_name, replica_id, follow=False)
+                service_name, replica_id, follow=False, tail=tail)
         else:
             assert False, component
 

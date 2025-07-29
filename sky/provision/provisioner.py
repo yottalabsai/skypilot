@@ -15,15 +15,20 @@ import colorama
 import sky
 from sky import clouds
 from sky import exceptions
+from sky import global_user_state
+from sky import logs
 from sky import provision
 from sky import sky_logging
+from sky import skypilot_config
 from sky.adaptors import aws
 from sky.backends import backend_utils
+from sky.jobs.server import utils as server_jobs_utils
 from sky.provision import common as provision_common
 from sky.provision import instance_setup
 from sky.provision import logging as provision_logging
 from sky.provision import metadata_utils
 from sky.skylet import constants
+from sky.utils import common
 from sky.utils import common_utils
 from sky.utils import message_utils
 from sky.utils import resources_utils
@@ -117,7 +122,7 @@ def bulk_provision(
         Cloud specific exceptions: If the provisioning process failed, cloud-
             specific exceptions will be raised by the cloud APIs.
     """
-    original_config = common_utils.read_yaml(cluster_yaml)
+    original_config = global_user_state.get_cluster_yaml_dict(cluster_yaml)
     head_node_type = original_config['head_node_type']
     bootstrap_config = provision_common.ProvisionConfig(
         provider_config=original_config['provider'],
@@ -228,9 +233,9 @@ def _ssh_probe_command(ip: str,
                        ssh_port: int,
                        ssh_user: str,
                        ssh_private_key: str,
+                       ssh_probe_timeout: int,
                        ssh_proxy_command: Optional[str] = None) -> List[str]:
-    # NOTE: Ray uses 'uptime' command and 10s timeout, we use the same
-    # setting here.
+    # NOTE: Ray uses 'uptime' command, we use the same setting here.
     command = [
         'ssh',
         '-T',
@@ -244,7 +249,7 @@ def _ssh_probe_command(ip: str,
         '-o',
         'PasswordAuthentication=no',
         '-o',
-        'ConnectTimeout=10s',
+        f'ConnectTimeout={ssh_probe_timeout}s',
         '-o',
         f'UserKnownHostsFile={os.devnull}',
         '-o',
@@ -277,6 +282,7 @@ def _wait_ssh_connection_direct(ip: str,
                                 ssh_port: int,
                                 ssh_user: str,
                                 ssh_private_key: str,
+                                ssh_probe_timeout: int,
                                 ssh_control_name: Optional[str] = None,
                                 ssh_proxy_command: Optional[str] = None,
                                 **kwargs) -> Tuple[bool, str]:
@@ -305,6 +311,7 @@ def _wait_ssh_connection_direct(ip: str,
         if success:
             return _wait_ssh_connection_indirect(ip, ssh_port, ssh_user,
                                                  ssh_private_key,
+                                                 ssh_probe_timeout,
                                                  ssh_control_name,
                                                  ssh_proxy_command)
     except socket.timeout:  # this is the most expected exception
@@ -312,7 +319,7 @@ def _wait_ssh_connection_direct(ip: str,
     except Exception as e:  # pylint: disable=broad-except
         stderr = f'Error: {common_utils.format_exception(e)}'
     command = _ssh_probe_command(ip, ssh_port, ssh_user, ssh_private_key,
-                                 ssh_proxy_command)
+                                 ssh_probe_timeout, ssh_proxy_command)
     logger.debug(f'Waiting for SSH to {ip}. Try: '
                  f'{_shlex_join(command)}. '
                  f'{stderr}')
@@ -323,6 +330,7 @@ def _wait_ssh_connection_indirect(ip: str,
                                   ssh_port: int,
                                   ssh_user: str,
                                   ssh_private_key: str,
+                                  ssh_probe_timeout: int,
                                   ssh_control_name: Optional[str] = None,
                                   ssh_proxy_command: Optional[str] = None,
                                   **kwargs) -> Tuple[bool, str]:
@@ -333,14 +341,14 @@ def _wait_ssh_connection_indirect(ip: str,
     """
     del ssh_control_name, kwargs  # unused
     command = _ssh_probe_command(ip, ssh_port, ssh_user, ssh_private_key,
-                                 ssh_proxy_command)
+                                 ssh_probe_timeout, ssh_proxy_command)
     message = f'Waiting for SSH using command: {_shlex_join(command)}'
     logger.debug(message)
     try:
         proc = subprocess.run(command,
                               shell=False,
                               check=False,
-                              timeout=10,
+                              timeout=ssh_probe_timeout,
                               stdout=subprocess.DEVNULL,
                               stderr=subprocess.PIPE)
         if proc.returncode != 0:
@@ -383,8 +391,13 @@ def wait_for_ssh(cluster_info: provision_common.ClusterInfo,
     def _retry_ssh_thread(ip_ssh_port: Tuple[str, int]):
         ip, ssh_port = ip_ssh_port
         success = False
+        ssh_probe_timeout = skypilot_config.get_nested(
+            ('provision', 'ssh_timeout'), 10)
         while not success:
-            success, stderr = waiter(ip, ssh_port, **ssh_credentials)
+            success, stderr = waiter(ip,
+                                     ssh_port,
+                                     **ssh_credentials,
+                                     ssh_probe_timeout=ssh_probe_timeout)
             if not success and time.time() - start > timeout:
                 with ux_utils.print_exception_no_traceback():
                     raise RuntimeError(
@@ -404,9 +417,11 @@ def wait_for_ssh(cluster_info: provision_common.ClusterInfo,
 
 def _post_provision_setup(
         cloud_name: str, cluster_name: resources_utils.ClusterName,
-        cluster_yaml: str, provision_record: provision_common.ProvisionRecord,
+        handle_cluster_yaml: str,
+        provision_record: provision_common.ProvisionRecord,
         custom_resource: Optional[str]) -> provision_common.ClusterInfo:
-    config_from_yaml = common_utils.read_yaml(cluster_yaml)
+    config_from_yaml = global_user_state.get_cluster_yaml_dict(
+        handle_cluster_yaml)
     provider_config = config_from_yaml.get('provider')
     cluster_info = provision.get_cluster_info(cloud_name,
                                               provision_record.region,
@@ -437,7 +452,7 @@ def _post_provision_setup(
     # TODO(suquark): Move wheel build here in future PRs.
     # We don't set docker_user here, as we are configuring the VM itself.
     ssh_credentials = backend_utils.ssh_credential_from_yaml(
-        cluster_yaml, ssh_user=cluster_info.ssh_user)
+        handle_cluster_yaml, ssh_user=cluster_info.ssh_user)
     docker_config = config_from_yaml.get('docker', {})
 
     with rich_utils.safe_status(
@@ -488,6 +503,24 @@ def _post_provision_setup(
             logger.debug(f'Docker user: {docker_user}')
             logger.info(f'{ux_utils.INDENT_LAST_SYMBOL}{colorama.Style.DIM}'
                         f'Docker container is up.{colorama.Style.RESET_ALL}')
+
+        # Check version compatibility for jobs controller clusters
+        if cluster_name.display_name.startswith(common.JOB_CONTROLLER_PREFIX):
+            # TODO(zeping): remove this in v0.12.0
+            # This only happens in upgrade from <0.9.3 to > 0.10.0
+            # After 0.10.0 no incompatibility issue
+            # See https://github.com/skypilot-org/skypilot/pull/6096
+            # For more details
+            status.update(
+                ux_utils.spinner_message(
+                    'Checking controller version compatibility'))
+            try:
+                server_jobs_utils.check_version_mismatch_and_non_terminal_jobs()
+            except exceptions.ClusterNotUpError:
+                # Controller is not up yet during initial provisioning, that
+                # also means no non-terminal jobs, so no incompatibility in
+                # this case.
+                pass
 
         # We mount the metadata with sky wheel for speedup.
         # NOTE: currently we mount all credentials for all nodes, because
@@ -636,6 +669,15 @@ def _post_provision_setup(
             logger.debug('Ray cluster is ready. Skip starting ray cluster on '
                          'worker nodes.')
 
+        logging_agent = logs.get_logging_agent()
+        if logging_agent:
+            status.update(
+                ux_utils.spinner_message('Setting up logging agent',
+                                         provision_logging.config.log_path))
+            instance_setup.setup_logging_on_cluster(logging_agent, cluster_name,
+                                                    cluster_info,
+                                                    ssh_credentials)
+
         instance_setup.start_skylet_on_head_node(cluster_name.name_on_cloud,
                                                  cluster_info, ssh_credentials)
 
@@ -648,7 +690,8 @@ def _post_provision_setup(
 @timeline.event
 def post_provision_runtime_setup(
         cloud_name: str, cluster_name: resources_utils.ClusterName,
-        cluster_yaml: str, provision_record: provision_common.ProvisionRecord,
+        handle_cluster_yaml: str,
+        provision_record: provision_common.ProvisionRecord,
         custom_resource: Optional[str],
         log_dir: str) -> provision_common.ClusterInfo:
     """Run internal setup commands after provisioning and before user setup.
@@ -659,6 +702,7 @@ def post_provision_runtime_setup(
        and other necessary files to the VM.
     3. Run setup commands to install dependencies.
     4. Start ray cluster and skylet.
+    5. (Optional) Setup logging agent.
 
     Raises:
         RuntimeError: If the setup process encounters any error.
@@ -666,11 +710,12 @@ def post_provision_runtime_setup(
     with provision_logging.setup_provision_logging(log_dir):
         try:
             logger.debug(_TITLE.format('System Setup After Provision'))
-            return _post_provision_setup(cloud_name,
-                                         cluster_name,
-                                         cluster_yaml=cluster_yaml,
-                                         provision_record=provision_record,
-                                         custom_resource=custom_resource)
+            return _post_provision_setup(
+                cloud_name,
+                cluster_name,
+                handle_cluster_yaml=handle_cluster_yaml,
+                provision_record=provision_record,
+                custom_resource=custom_resource)
         except Exception:  # pylint: disable=broad-except
             logger.error(
                 ux_utils.error_message(

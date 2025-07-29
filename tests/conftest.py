@@ -9,7 +9,12 @@ from typing import List
 import pytest
 import requests
 from smoke_tests.docker import docker_utils
+from sqlalchemy import exc as sqlalchemy_exc
+from sqlalchemy import orm
+from sqlalchemy import text as sqlalchemy_text
+import sqlalchemy_adapter
 
+from sky import global_user_state
 from sky import sky_logging
 
 # Initialize logger at the top level
@@ -29,6 +34,7 @@ from common_test_fixtures import mock_redirect_log_file
 from common_test_fixtures import mock_services_no_service
 from common_test_fixtures import mock_services_one_service
 from common_test_fixtures import mock_stream_utils
+from common_test_fixtures import reset_global_state
 from common_test_fixtures import skyignore_dir
 
 from sky.server import common as server_common
@@ -53,7 +59,7 @@ from sky.server import common as server_common
 all_clouds_in_smoke_tests = [
     'aws', 'gcp', 'azure', 'lambda', 'cloudflare', 'ibm', 'scp', 'oci', 'do',
     'kubernetes', 'vsphere', 'cudo', 'fluidstack', 'paperspace', 'runpod',
-    'vast', 'nebius'
+    'vast', 'nebius', 'hyperbolic'
 ]
 default_clouds_to_run = ['aws', 'azure']
 
@@ -78,7 +84,8 @@ cloud_to_pytest_keyword = {
     'do': 'do',
     'vast': 'vast',
     'runpod': 'runpod',
-    'nebius': 'nebius'
+    'nebius': 'nebius',
+    'hyperbolic': 'hyperbolic'
 }
 
 
@@ -146,6 +153,38 @@ def pytest_addoption(parser):
         default=None,
         help='Controller cloud to use for tests',
     )
+    parser.addoption(
+        '--postgres',
+        action='store_true',
+        default=False,
+        help='Run tests for Postgres Backend',
+    )
+    parser.addoption(
+        '--no-resource-heavy',
+        action='store_true',
+        default=False,
+        help='Skip tests marked as resource_heavy',
+    )
+    parser.addoption(
+        '--helm-version',
+        type=str,
+        default='',
+        help='Version of Helm to use for tests',
+    )
+    parser.addoption(
+        '--helm-package',
+        type=str,
+        default='',
+        help='Package name to use for Helm tests',
+    )
+    parser.addoption(
+        '--jobs-consolidation',
+        action='store_true',
+        default=False,
+        help=('If set, the tests will be run in jobs consolidation mode '
+              '(The config change is made in buildkite so this is a flag to '
+              'ensure the tests will not be skipped but no actual effect)'),
+    )
 
 
 def pytest_configure(config):
@@ -156,6 +195,18 @@ def pytest_configure(config):
         cloud_keyword = cloud_to_pytest_keyword[cloud]
         config.addinivalue_line(
             'markers', f'{cloud_keyword}: mark test as {cloud} specific')
+
+    # Validate incompatible option combinations
+    if config.getoption('--remote-server'):
+        if config.getoption('--jobs-consolidation'):
+            raise ValueError(
+                '--remote-server and --jobs-consolidation are not compatible. '
+                'Jobs consolidation mode is not supported with remote server testing.'
+            )
+        if config.getoption('--postgres'):
+            raise ValueError(
+                '--remote-server and --postgres are not compatible. '
+                'Postgres backend is not supported with remote server testing.')
 
     pytest.terminate_on_failure = config.getoption('--terminate-on-failure')
 
@@ -191,9 +242,13 @@ def pytest_collection_modifyitems(config, items):
         reason='skipped, because --tpu option is set')
     skip_marks['local'] = pytest.mark.skip(
         reason='test requires local API server')
+    skip_marks['no_resource_heavy'] = pytest.mark.skip(
+        reason='skipped, because --no-resource-heavy option is set')
     for cloud in all_clouds_in_smoke_tests:
         skip_marks[cloud] = pytest.mark.skip(
             reason=f'tests for {cloud} is skipped, try setting --{cloud}')
+    skip_marks['postgres'] = pytest.mark.skip(
+        reason='skipped, because --postgres option is set')
 
     cloud_to_run = _get_cloud_to_run(config)
     generic_cloud = _generic_cloud(config)
@@ -226,6 +281,14 @@ def pytest_collection_modifyitems(config, items):
             item.add_marker(skip_marks['tpu'])
         if (not 'serve' in item.keywords) and config.getoption('--serve'):
             item.add_marker(skip_marks['serve'])
+        if ('no_postgres' in item.keywords) and config.getoption('--postgres'):
+            item.add_marker(skip_marks['postgres'])
+
+        # Skip tests marked as resource_heavy if --no-resource-heavy is set
+        marks = [mark.name for mark in item.iter_markers()]
+        if 'resource_heavy' in marks and config.getoption(
+                '--no-resource-heavy'):
+            item.add_marker(skip_marks['no_resource_heavy'])
 
     # Check if tests need to be run serially for Kubernetes and Lambda Cloud
     # We run Lambda Cloud tests serially because Lambda Cloud rate limits its
@@ -456,3 +519,13 @@ def setup_controller_cloud_env(request):
     controller_cloud = request.config.getoption('--controller-cloud')
     os.environ['PYTEST_SKYPILOT_CONTROLLER_CLOUD'] = controller_cloud
     yield controller_cloud
+
+
+@pytest.fixture(scope='session', autouse=True)
+def setup_postgres_backend_env(request):
+    """Setup Postgres Backend environment variable if --postgres is specified."""
+    if not request.config.getoption('--postgres'):
+        yield
+        return
+    os.environ['PYTEST_SKYPILOT_POSTGRES_BACKEND'] = '1'
+    yield

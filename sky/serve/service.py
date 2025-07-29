@@ -19,6 +19,7 @@ from sky import sky_logging
 from sky import task as task_lib
 from sky.backends import backend_utils
 from sky.backends import cloud_vm_ray_backend
+from sky.data import data_utils
 from sky.serve import constants
 from sky.serve import controller
 from sky.serve import load_balancer
@@ -71,6 +72,8 @@ def cleanup_storage(task_yaml: str) -> bool:
     Returns:
         True if the storage is cleaned up successfully, False otherwise.
     """
+    failed = False
+
     try:
         task = task_lib.Task.from_yaml(task_yaml)
         backend = cloud_vm_ray_backend.CloudVmRayBackend()
@@ -86,8 +89,25 @@ def cleanup_storage(task_yaml: str) -> bool:
                      f'{common_utils.format_exception(e)}')
         with ux_utils.enable_traceback():
             logger.error(f'  Traceback: {traceback.format_exc()}')
-        return False
-    return True
+        failed = True
+
+    # Clean up any files mounted from the local disk, such as two-hop file
+    # mounts.
+    for file_mount in (task.file_mounts or {}).values():
+        try:
+            if not data_utils.is_cloud_store_url(file_mount):
+                path = os.path.expanduser(file_mount)
+                if os.path.isdir(path):
+                    shutil.rmtree(path)
+                else:
+                    os.remove(path)
+        except Exception as e:  # pylint: disable=broad-except
+            logger.error(f'Failed to clean up file mount {file_mount}: {e}')
+            with ux_utils.enable_traceback():
+                logger.error(f'  Traceback: {traceback.format_exc()}')
+            failed = True
+
+    return not failed
 
 
 def _cleanup(service_name: str) -> bool:
@@ -186,7 +206,8 @@ def _start(service_name: str, tmp_task_yaml: str, job_id: int):
 
     service_dir = os.path.expanduser(
         serve_utils.generate_remote_service_dir_name(service_name))
-    task_yaml = serve_utils.generate_task_yaml_file_name(service_name, version)
+    service_task_yaml = serve_utils.generate_task_yaml_file_name(
+        service_name, version)
 
     if not is_recovery:
         if (len(serve_state.get_services()) >=
@@ -218,7 +239,7 @@ def _start(service_name: str, tmp_task_yaml: str, job_id: int):
         # don't want the new file mounts to overwrite the old one, so we
         # sync to a tmp file first and then copy it to the final name
         # if there is no name conflict.
-        shutil.copy(tmp_task_yaml, task_yaml)
+        shutil.copy(tmp_task_yaml, service_task_yaml)
 
     controller_process = None
     load_balancer_process = None
@@ -249,8 +270,8 @@ def _start(service_name: str, tmp_task_yaml: str, job_id: int):
             controller_host = _get_controller_host()
             controller_process = multiprocessing.Process(
                 target=controller.run_controller,
-                args=(service_name, service_spec, task_yaml, controller_host,
-                      controller_port))
+                args=(service_name, service_spec, service_task_yaml,
+                      controller_host, controller_port))
             controller_process.start()
 
             if not is_recovery:
