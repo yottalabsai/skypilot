@@ -164,7 +164,7 @@ def terminate_instances(
         if worker_only and inst['name'].endswith('-head'):
             continue
         try:
-            yotta_client.terminate_instances(inst_id)
+            yotta_client.terminate_instances(int(inst_id))
         except Exception as e:  # pylint: disable=broad-except
             with ux_utils.print_exception_no_traceback():
                 raise RuntimeError(

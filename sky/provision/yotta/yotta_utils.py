@@ -4,7 +4,7 @@ import base64
 import enum
 import json
 import os
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 import uuid
 
 import requests
@@ -47,7 +47,7 @@ def get_key_suffix():
     return str(uuid.uuid4()).replace('-', '')[:8]
 
 
-def _load_credentials() -> tuple[str, str]:
+def _load_credentials() -> Tuple[str, str]:
     """Reads the credentials file and returns userId and apikey."""
     if not os.path.isfile(CREDENTIALS_FILE_PATH):
         raise FileNotFoundError(
@@ -61,8 +61,8 @@ def _load_credentials() -> tuple[str, str]:
                     key, value = line.strip().split('=', 1)
                     credentials[key] = value
 
-        user_id: str = credentials.get('userId')
-        api_key: str = credentials.get('apikey')
+        user_id: str = credentials.get('userId', '')
+        api_key: str = credentials.get('apikey', '')
 
         if not user_id or not api_key:
             raise ValueError(
@@ -241,7 +241,8 @@ class YottaClient:
             'image': image_name,
             'gpuType': gpu_type,
             'gpuCount': gpu_quantity,
-            'cloudType': cloud_type.value,
+            'cloudType': cloud_type.value
+                         if cloud_type is not None else CloudType.SECURE.value,
             'region': zone,
             'expose': expose,
             'initializationCommand': docker_args,

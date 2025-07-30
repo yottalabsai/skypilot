@@ -11,6 +11,7 @@ from sky.utils import resources_utils
 
 if typing.TYPE_CHECKING:
     from sky import resources as resources_lib
+    from sky.utils import volume as volume_lib
 
 _CREDENTIAL_FILES = [
     'credentials',
@@ -141,12 +142,13 @@ class Yotta(clouds.Cloud):
         return 0.0
 
     @classmethod
-    def get_default_instance_type(
-            cls,
-            cpus: Optional[str] = None,
-            memory: Optional[str] = None,
-            disk_tier: Optional[resources_utils.DiskTier] = None
-    ) -> Optional[str]:
+    def get_default_instance_type(cls,
+                                  cpus: Optional[str] = None,
+                                  memory: Optional[str] = None,
+                                  disk_tier: Optional[
+                                      resources_utils.DiskTier] = None,
+                                  region: Optional[str] = None,
+                                  zone: Optional[str] = None) -> Optional[str]:
         """Returns the default instance type for Yotta."""
         return catalog.get_default_instance_type(cpus=cpus,
                                                  memory=memory,
