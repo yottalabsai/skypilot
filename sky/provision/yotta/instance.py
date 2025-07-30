@@ -5,7 +5,8 @@ from typing import Any, Dict, List, Optional
 from sky import sky_logging
 from sky.provision import common
 from sky.provision.yotta import yotta_utils
-from sky.provision.yotta.yotta_utils import PodStatusEnum, yotta_client
+from sky.provision.yotta.yotta_utils import PodStatusEnum
+from sky.provision.yotta.yotta_utils import yotta_client
 from sky.utils import common_utils
 from sky.utils import resources_utils
 from sky.utils import status_lib
@@ -32,7 +33,7 @@ def _filter_instances(cluster_name_on_cloud: str,
         try:
             instance_status = PodStatusEnum(status)
         except ValueError:
-            logger.warning(f"Unknown pod status: {status}")
+            logger.warning(f'Unknown pod status: {status}')
             continue
         if (status_filters is not None and
                 instance_status not in status_filters):
@@ -63,7 +64,8 @@ def run_instances(region: str, cluster_name_on_cloud: str,
             break
         logger.info(f'Waiting for {len(instances)} instances to be ready.')
         time.sleep(POLL_INTERVAL)
-    exist_instances = _filter_instances(cluster_name_on_cloud, [PodStatusEnum.RUNNING])
+    exist_instances = _filter_instances(cluster_name_on_cloud,
+                                        [PodStatusEnum.RUNNING])
     head_instance_id = _get_head_instance_id(exist_instances)
 
     to_start_count = config.count - len(exist_instances)
@@ -112,7 +114,8 @@ def run_instances(region: str, cluster_name_on_cloud: str,
 
     # Wait for instances to be ready.
     while True:
-        instances = _filter_instances(cluster_name_on_cloud, [PodStatusEnum.RUNNING])
+        instances = _filter_instances(cluster_name_on_cloud,
+                                      [PodStatusEnum.RUNNING])
         ready_instance_cnt = 0
         for instance_id, instance in instances.items():
             port = yotta_utils.get_ssh_port(instance)
@@ -134,10 +137,11 @@ def run_instances(region: str, cluster_name_on_cloud: str,
         resumed_instance_ids=[],
         created_instance_ids=created_instance_ids)
 
-    
+
 def wait_instances(region: str, cluster_name_on_cloud: str,
                    state: Optional[status_lib.ClusterStatus]) -> None:
     del region, cluster_name_on_cloud, state
+
 
 def stop_instances(
     cluster_name_on_cloud: str,
@@ -145,6 +149,7 @@ def stop_instances(
     worker_only: bool = False,
 ) -> None:
     raise NotImplementedError()
+
 
 def terminate_instances(
     cluster_name_on_cloud: str,
@@ -166,21 +171,25 @@ def terminate_instances(
                     f'Failed to terminate instance {inst_id}: '
                     f'{common_utils.format_exception(e, use_bracket=False)}'
                 ) from e
+
+
 def get_cluster_info(
         region: str,
         cluster_name_on_cloud: str,
         provider_config: Optional[Dict[str, Any]] = None) -> common.ClusterInfo:
     del region  # unused
-    running_instances = _filter_instances(cluster_name_on_cloud, [PodStatusEnum.RUNNING])
+    running_instances = _filter_instances(cluster_name_on_cloud,
+                                          [PodStatusEnum.RUNNING])
     instances: Dict[str, List[common.InstanceInfo]] = {}
     head_instance_id = None
     for instance_id, instance_info in running_instances.items():
         port = yotta_utils.get_ssh_port(instance_info)
         external_ip = port.get('host')
+        internal_ip = port.get('privateHost')
         instances[instance_id] = [
             common.InstanceInfo(
                 instance_id=instance_id,
-                internal_ip=external_ip,
+                internal_ip=internal_ip,
                 external_ip=external_ip,
                 ssh_port=port.get('proxyPort'),
                 tags={},
@@ -195,8 +204,8 @@ def get_cluster_info(
         provider_config=provider_config,
         custom_ray_options={'use_external_ip': True},
     )
-    
-    
+
+
 def query_instances(
     cluster_name_on_cloud: str,
     provider_config: Optional[Dict[str, Any]] = None,
@@ -213,7 +222,7 @@ def query_instances(
         PodStatusEnum.FAILED: status_lib.ClusterStatus.STOPPED,
         # not support pause just mapping status
         PodStatusEnum.PAUSING: status_lib.ClusterStatus.UP,
-        PodStatusEnum.PAUSED: status_lib.ClusterStatus.STOPPED,        
+        PodStatusEnum.PAUSED: status_lib.ClusterStatus.STOPPED,
     }
     statuses: Dict[str, Optional[status_lib.ClusterStatus]] = {}
     for inst_id, instance in instances.items():
@@ -223,12 +232,14 @@ def query_instances(
         statuses[inst_id] = status
     return statuses
 
+
 def cleanup_ports(
     cluster_name_on_cloud: str,
     ports: List[str],
     provider_config: Optional[Dict[str, Any]] = None,
 ) -> None:
     del cluster_name_on_cloud, ports, provider_config  # Unused.
+
 
 def query_ports(
     cluster_name_on_cloud: str,

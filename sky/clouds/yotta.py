@@ -3,11 +3,12 @@
 import typing
 from typing import Dict, Iterator, List, Optional, Tuple, Union
 
+from sky import catalog
 from sky import clouds
-from sky.clouds import service_catalog
+from sky.provision.yotta.yotta_utils import yotta_client
 from sky.utils import registry
 from sky.utils import resources_utils
-from sky.provision.yotta.yotta_utils import yotta_client
+
 if typing.TYPE_CHECKING:
     from sky import resources as resources_lib
 
@@ -16,7 +17,10 @@ _CREDENTIAL_FILES = [
 ]
 
 _CLOUD = 'yotta'
-_BASE_IMAGE = 'yottalabsai/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04-2025050802'
+_BASE_IMAGE = (
+    'yottalabsai/pytorch:2.8.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04-'
+    '2025050802')
+
 
 @registry.CLOUD_REGISTRY.register
 class Yotta(clouds.Cloud):
@@ -35,6 +39,9 @@ class Yotta(clouds.Cloud):
              'to local disk.'),
         clouds.CloudImplementationFeatures.HIGH_AVAILABILITY_CONTROLLERS:
             ('High availability controllers are not supported on Yotta.'),
+        clouds.CloudImplementationFeatures.CUSTOM_MULTI_NETWORK:
+            ('Customized multiple network interfaces are not supported on '
+             'Yotta.'),
     }
     _MAX_CLUSTER_NAME_LEN_LIMIT = 255
     _regions: List[clouds.Region] = []
@@ -69,7 +76,7 @@ class Yotta(clouds.Cloud):
                               use_spot: bool, region: Optional[str],
                               zone: Optional[str]) -> List[clouds.Region]:
         del accelerators  # unused
-        regions = service_catalog.get_region_zones_for_instance_type(
+        regions = catalog.get_region_zones_for_instance_type(
             instance_type, use_spot, _CLOUD)
 
         if region is not None:
@@ -87,8 +94,8 @@ class Yotta(clouds.Cloud):
         cls,
         instance_type: str,
     ) -> Tuple[Optional[float], Optional[float]]:
-        return service_catalog.get_vcpus_mem_from_instance_type(instance_type,
-                                                                clouds = _CLOUD)
+        return catalog.get_vcpus_mem_from_instance_type(instance_type,
+                                                        clouds=_CLOUD)
 
     @classmethod
     def zones_provision_loop(
@@ -115,11 +122,11 @@ class Yotta(clouds.Cloud):
                                      use_spot: bool,
                                      region: Optional[str] = None,
                                      zone: Optional[str] = None) -> float:
-        return service_catalog.get_hourly_cost(instance_type,
-                                               use_spot=use_spot,
-                                               region=region,
-                                               zone=zone,
-                                               clouds=_CLOUD)
+        return catalog.get_hourly_cost(instance_type,
+                                       use_spot=use_spot,
+                                       region=region,
+                                       zone=zone,
+                                       clouds=_CLOUD)
 
     def accelerators_to_hourly_cost(self,
                                     accelerators: Dict[str, int],
@@ -141,29 +148,31 @@ class Yotta(clouds.Cloud):
             disk_tier: Optional[resources_utils.DiskTier] = None
     ) -> Optional[str]:
         """Returns the default instance type for Yotta."""
-        return service_catalog.get_default_instance_type(cpus=cpus,
-                                                         memory=memory,
-                                                         disk_tier=disk_tier,
-                                                         clouds=_CLOUD)
+        return catalog.get_default_instance_type(cpus=cpus,
+                                                 memory=memory,
+                                                 disk_tier=disk_tier,
+                                                 clouds=_CLOUD)
 
     @classmethod
     def get_accelerators_from_instance_type(
             cls, instance_type: str) -> Optional[Dict[str, Union[int, float]]]:
-        return service_catalog.get_accelerators_from_instance_type(
-            instance_type, clouds=_CLOUD)
+        return catalog.get_accelerators_from_instance_type(instance_type,
+                                                           clouds=_CLOUD)
 
     @classmethod
     def get_zone_shell_cmd(cls) -> Optional[str]:
         return None
 
     def make_deploy_resources_variables(
-            self,
-            resources: 'resources_lib.Resources',
-            cluster_name: resources_utils.ClusterName,
-            region: 'clouds.Region',
-            zones: Optional[List['clouds.Zone']],
-            num_nodes: int,
-            dryrun: bool = False) -> Dict[str, Optional[Union[str, bool]]]:
+        self,
+        resources: 'resources_lib.Resources',
+        cluster_name: resources_utils.ClusterName,
+        region: 'clouds.Region',
+        zones: Optional[List['clouds.Zone']],
+        num_nodes: int,
+        dryrun: bool = False,
+        volume_mounts: Optional[List['volume_lib.VolumeMount']] = None,
+    ) -> Dict[str, Optional[Union[str, bool]]]:
         del dryrun, cluster_name  # unused
         assert zones is not None, (region, zones)
 
@@ -236,15 +245,15 @@ class Yotta(clouds.Cloud):
 
         assert len(accelerators) == 1, resources
         acc, acc_count = list(accelerators.items())[0]
-        (instance_list, fuzzy_candidate_list
-        ) = service_catalog.get_instance_type_for_accelerator(
-            acc,
-            acc_count,
-            use_spot=resources.use_spot,
-            cpus=resources.cpus,
-            region=resources.region,
-            zone=resources.zone,
-            clouds=_CLOUD)
+        (instance_list,
+         fuzzy_candidate_list) = catalog.get_instance_type_for_accelerator(
+             acc,
+             acc_count,
+             use_spot=resources.use_spot,
+             cpus=resources.cpus,
+             region=resources.region,
+             zone=resources.zone,
+             clouds=_CLOUD)
         if instance_list is None:
             return resources_utils.FeasibleResources([], fuzzy_candidate_list,
                                                      None)
@@ -281,12 +290,10 @@ class Yotta(clouds.Cloud):
         return None
 
     def instance_type_exists(self, instance_type: str) -> bool:
-        return service_catalog.instance_type_exists(instance_type, _CLOUD)
+        return catalog.instance_type_exists(instance_type, _CLOUD)
 
     def validate_region_zone(self, region: Optional[str], zone: Optional[str]):
-        return service_catalog.validate_region_zone(region,
-                                                    zone,
-                                                    clouds=_CLOUD)
+        return catalog.validate_region_zone(region, zone, clouds=_CLOUD)
 
     @classmethod
     def get_image_size(cls, image_id: str, region: Optional[str]) -> float:
