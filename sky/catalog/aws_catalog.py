@@ -38,14 +38,26 @@ _DEFAULT_INSTANCE_FAMILY = [
     # CPU: Intel Ice Lake 8375C.
     # Memory: 4 GiB RAM per 1 vCPU;
     'm6i',
+    # This is the latest general-purpose instance family as of Jul 2025.
+    # CPU: Intel Sapphire Rapids.
+    # Memory: 4 GiB RAM per 1 vCPU;
+    'm7i',
     # This is the latest memory-optimized instance family as of Mar 2023.
     # CPU: Intel Ice Lake 8375C
     # Memory: 8 GiB RAM per 1 vCPU;
     'r6i',
+    # This is the latest memory-optimized instance family as of Jul 2025.
+    # CPU: Intel Sapphire Rapids.
+    # Memory: 8 GiB RAM per 1 vCPU;
+    'r7i',
     # This is the latest compute-optimized instance family as of Mar 2023.
     # CPU: Intel Ice Lake 8375C
     # Memory: 2 GiB RAM per 1 vCPU;
     'c6i',
+    # This is the latest compute-optimized instance family as of Jul 2025.
+    # CPU: Intel Sapphire Rapids.
+    # Memory: 2 GiB RAM per 1 vCPU;
+    'c7i',
 ]
 _DEFAULT_NUM_VCPUS = 8
 _DEFAULT_MEMORY_CPU_RATIO = 4
@@ -257,6 +269,10 @@ def get_accelerators_from_instance_type(
         instance_type: str) -> Optional[Dict[str, Union[int, float]]]:
     return common.get_accelerators_from_instance_type_impl(
         _get_df(), instance_type)
+
+
+def get_arch_from_instance_type(instance_type: str) -> Optional[str]:
+    return common.get_arch_from_instance_type_impl(_get_df(), instance_type)
 
 
 def get_instance_type_for_accelerator(

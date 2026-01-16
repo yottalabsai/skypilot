@@ -1,0 +1,2 @@
+# Similar to .gitignore
+# Matches will not be synced to the development pod or cause the development pod to reload.

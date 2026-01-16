@@ -51,7 +51,7 @@ class InstanceTypeInfo(NamedTuple):
     cloud: str
     instance_type: Optional[str]
     accelerator_name: str
-    accelerator_count: int
+    accelerator_count: float
     cpu_count: Optional[float]
     device_memory: Optional[float]
     memory: Optional[float]
@@ -385,7 +385,7 @@ def get_hourly_cost_impl(
                              f'{instance_type!r}.')
     cheapest_idx = df[price_str].idxmin()
     cheapest = df.loc[cheapest_idx]
-    return cheapest[price_str]
+    return float(cheapest[price_str])
 
 
 def _get_value(value):
@@ -527,6 +527,24 @@ def get_accelerators_from_instance_type_impl(
     return {acc_name: _convert(acc_count)}
 
 
+def get_arch_from_instance_type_impl(
+    df: 'pd.DataFrame',
+    instance_type: str,
+) -> Optional[str]:
+    df = _get_instance_type(df, instance_type, None)
+    if df.empty:
+        with ux_utils.print_exception_no_traceback():
+            raise ValueError(f'No instance type {instance_type} found.')
+    row = df.iloc[0]
+    if 'Arch' not in row:
+        return None
+    arch = row['Arch']
+    if pd.isnull(arch):
+        return None
+
+    return arch
+
+
 def get_instance_type_for_accelerator_impl(
     df: 'pd.DataFrame',
     acc_name: str,
@@ -631,7 +649,7 @@ def list_accelerators_impl(
         df = df[df['Region'].str.contains(region_filter,
                                           case=case_sensitive,
                                           regex=True)]
-    df['AcceleratorCount'] = df['AcceleratorCount'].astype(int)
+    df['AcceleratorCount'] = df['AcceleratorCount'].astype(float)
     if quantity_filter is not None:
         df = df[df['AcceleratorCount'] == quantity_filter]
     grouped = df.groupby('AcceleratorName')

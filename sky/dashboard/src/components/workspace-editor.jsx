@@ -45,6 +45,8 @@ import { statusGroups } from './jobs'; // Import statusGroups
 import yaml from 'js-yaml';
 import { CLOUD_CANONICALIZATIONS } from '@/data/connectors/constants';
 import { getUsers } from '@/data/connectors/users';
+import { dashboardCache } from '@/lib/cache';
+import { apiClient } from '@/data/connectors/client';
 
 // Success display component
 const SuccessDisplay = ({ message }) => {
@@ -63,6 +65,7 @@ const WorkspaceConfigDescription = ({
   workspaceName,
   config,
   enabledClouds = [],
+  isLoading = false,
 }) => {
   if (!config) return null;
 
@@ -94,52 +97,89 @@ const WorkspaceConfigDescription = ({
 
     const cloudName =
       CLOUD_CANONICALIZATIONS[cloud.toLowerCase()] || cloud.toUpperCase();
-    const isActuallyEnabled = enabledCloudsSet.has(cloudName?.toLowerCase());
+
+    // Check if cloud is enabled - handle both exact matches and expanded cloud names
+    // (e.g., 'kubernetes' should match both 'kubernetes' and 'kubernetes/context-name')
+    const cloudLower = cloudName?.toLowerCase();
+    const isActuallyEnabled =
+      enabledCloudsSet.has(cloudLower) ||
+      Array.from(enabledCloudsSet).some((enabledCloud) =>
+        enabledCloud.startsWith(cloudLower + '/')
+      );
+
+    // For Kubernetes, get the specific contexts that are enabled
+    const getEnabledKubernetesContexts = () => {
+      if (cloud.toLowerCase() === 'kubernetes') {
+        return Array.from(enabledCloudsSet)
+          .filter((enabledCloud) => enabledCloud.startsWith(cloudLower + '/'))
+          .map((k8sCloud) => k8sCloud.split('/')[1]); // Extract context name
+      }
+      return [];
+    };
 
     if (cloudConfig?.disabled === true) {
       disabledClouds.push(cloudName);
     } else if (cloudConfig && Object.keys(cloudConfig).length > 0) {
-      let detail = '';
-      if (cloud.toLowerCase() === 'gcp' && cloudConfig.project_id) {
-        detail = ` (Project ID: ${cloudConfig.project_id})`;
-      } else if (cloud.toLowerCase() === 'aws' && cloudConfig.region) {
-        detail = ` (Region: ${cloudConfig.region})`;
-      }
+      if (!isLoading) {
+        let detail = '';
+        if (cloud.toLowerCase() === 'gcp' && cloudConfig.project_id) {
+          detail = ` (Project ID: ${cloudConfig.project_id})`;
+        } else if (cloud.toLowerCase() === 'aws' && cloudConfig.region) {
+          detail = ` (Region: ${cloudConfig.region})`;
+        } else if (cloud.toLowerCase() === 'kubernetes') {
+          const enabledContexts = getEnabledKubernetesContexts();
+          if (enabledContexts.length > 0) {
+            detail = ` (Contexts: ${enabledContexts.join(', ')})`;
+          }
+        }
 
-      if (isActuallyEnabled) {
-        enabledDescriptions.push(
-          <span key={`${cloud}-enabled`} className="block">
-            {cloudName}
-            {detail} is enabled.
-          </span>
-        );
-      } else {
-        configuredButNotEnabled.push(
-          <span
-            key={`${cloud}-configured-not-enabled`}
-            className="block text-amber-700"
-          >
-            {cloudName}
-            {detail} is configured but not currently available.
-          </span>
-        );
+        if (isActuallyEnabled) {
+          enabledDescriptions.push(
+            <span key={`${cloud}-enabled`} className="block">
+              {cloudName}
+              {detail} is enabled.
+            </span>
+          );
+        } else {
+          configuredButNotEnabled.push(
+            <span
+              key={`${cloud}-configured-not-enabled`}
+              className="block text-amber-700"
+            >
+              {cloudName}
+              {detail} is configured but not currently available.
+            </span>
+          );
+        }
       }
     } else {
-      if (isActuallyEnabled) {
-        enabledDescriptions.push(
-          <span key={`${cloud}-default-enabled`} className="block">
-            {cloudName} is enabled (using default settings).
-          </span>
-        );
-      } else {
-        configuredButNotEnabled.push(
-          <span
-            key={`${cloud}-default-not-enabled`}
-            className="block text-amber-700"
-          >
-            {cloudName} is configured but not currently available.
-          </span>
-        );
+      if (!isLoading) {
+        if (isActuallyEnabled) {
+          // For Kubernetes with no specific config, still show available contexts
+          let defaultDetail = '';
+          if (cloud.toLowerCase() === 'kubernetes') {
+            const enabledContexts = getEnabledKubernetesContexts();
+            if (enabledContexts.length > 0) {
+              defaultDetail = ` (Contexts: ${enabledContexts.join(', ')})`;
+            }
+          }
+
+          enabledDescriptions.push(
+            <span key={`${cloud}-default-enabled`} className="block">
+              {cloudName}
+              {defaultDetail} is enabled (using default settings).
+            </span>
+          );
+        } else {
+          configuredButNotEnabled.push(
+            <span
+              key={`${cloud}-default-not-enabled`}
+              className="block text-amber-700"
+            >
+              {cloudName} is configured but not currently available.
+            </span>
+          );
+        }
       }
     }
   });
@@ -283,42 +323,49 @@ export function WorkspaceEditor({ workspaceName, isNewWorkspace = false }) {
   });
   const [statsLoading, setStatsLoading] = useState(false);
 
-  const fetchWorkspaceConfig = useCallback(async () => {
-    setLoading(true);
-    setError(null);
-    try {
-      const [allWorkspaces, usersResponse] = await Promise.all([
-        getWorkspaces(),
-        getUsers(),
-      ]);
-
-      const config = allWorkspaces[workspaceName] || {};
-      setWorkspaceConfig(config);
-      setOriginalConfig(config);
-      setAllUsers(usersResponse || []);
-
-      // Format as YAML with workspace name as top-level key
-      const fullConfig = { [workspaceName]: config };
-      let yamlOutput;
-      if (Object.keys(config).length === 0) {
-        yamlOutput = `${workspaceName}:\n  # Empty workspace configuration - uses all accessible infrastructure\n`;
-      } else {
-        yamlOutput = yaml.dump(fullConfig, {
-          indent: 2,
-          lineWidth: -1,
-          noRefs: true,
-          skipInvalid: true,
-          flowLevel: -1,
-        });
+  const fetchWorkspaceConfig = useCallback(
+    async (showLoading = true) => {
+      if (showLoading) {
+        setLoading(true);
       }
-      setYamlValue(yamlOutput);
-    } catch (err) {
-      console.error('Error fetching workspace config:', err);
-      setError(err);
-    } finally {
-      setLoading(false);
-    }
-  }, [workspaceName]);
+      setError(null);
+      try {
+        const [allWorkspaces, usersResponse] = await Promise.all([
+          getWorkspaces(),
+          getUsers(),
+        ]);
+
+        const config = allWorkspaces[workspaceName] || {};
+        setWorkspaceConfig(config);
+        setOriginalConfig(config);
+        setAllUsers(usersResponse || []);
+
+        // Format as YAML with workspace name as top-level key
+        const fullConfig = { [workspaceName]: config };
+        let yamlOutput;
+        if (Object.keys(config).length === 0) {
+          yamlOutput = `${workspaceName}:\n  # Empty workspace configuration - uses all accessible infrastructure\n`;
+        } else {
+          yamlOutput = yaml.dump(fullConfig, {
+            indent: 2,
+            lineWidth: -1,
+            noRefs: true,
+            skipInvalid: true,
+            flowLevel: -1,
+          });
+        }
+        setYamlValue(yamlOutput);
+      } catch (err) {
+        console.error('Error fetching workspace config:', err);
+        setError(err);
+      } finally {
+        if (showLoading) {
+          setLoading(false);
+        }
+      }
+    },
+    [workspaceName]
+  );
 
   const fetchWorkspaceStats = useCallback(async () => {
     if (isNewWorkspace) return;
@@ -327,9 +374,16 @@ export function WorkspaceEditor({ workspaceName, isNewWorkspace = false }) {
     try {
       const [clustersResponse, managedJobsResponse, enabledClouds] =
         await Promise.all([
-          getClusters(),
-          getManagedJobs(),
-          getEnabledClouds(workspaceName, true),
+          dashboardCache.get(getClusters),
+          dashboardCache.get(getManagedJobs, [
+            {
+              allUsers: true,
+              skipFinished: true,
+              workspaceMatch: workspaceName,
+              fields: ['workspace', 'status'],
+            },
+          ]),
+          dashboardCache.get(getEnabledClouds, [workspaceName, true]),
         ]);
 
       // Filter clusters for this workspace
@@ -355,16 +409,11 @@ export function WorkspaceEditor({ workspaceName, isNewWorkspace = false }) {
       let managedJobsCount = 0;
 
       jobs.forEach((job) => {
-        const jobClusterName =
-          job.cluster_name || (job.resources && job.resources.cluster_name);
-        if (jobClusterName) {
-          const jobWorkspace = clusterNameToWorkspace[jobClusterName];
-          if (
-            jobWorkspace === workspaceName &&
-            activeJobStatuses.has(job.status)
-          ) {
-            managedJobsCount++;
-          }
+        if (
+          job.workspace === workspaceName &&
+          activeJobStatuses.has(job.status)
+        ) {
+          managedJobsCount++;
         }
       });
 
@@ -543,7 +592,15 @@ export function WorkspaceEditor({ workspaceName, isNewWorkspace = false }) {
   };
 
   const handleRefresh = async () => {
-    await Promise.all([fetchWorkspaceConfig(), fetchWorkspaceStats()]);
+    setLoading(true);
+    try {
+      await apiClient.fetch('/check', {}, 'POST');
+      await Promise.all([fetchWorkspaceConfig(false), fetchWorkspaceStats()]);
+    } catch (error) {
+      console.error('Error during sky check refresh:', error);
+    } finally {
+      setLoading(false);
+    }
   };
 
   if (!router.isReady) {
@@ -714,6 +771,7 @@ export function WorkspaceEditor({ workspaceName, isNewWorkspace = false }) {
                           workspaceName={workspaceName}
                           config={originalConfig}
                           enabledClouds={workspaceStats.clouds}
+                          isLoading={statsLoading}
                         />
                       </div>
 

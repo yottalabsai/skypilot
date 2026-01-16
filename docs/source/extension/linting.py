@@ -7,6 +7,7 @@ from sphinx.util.logging import getLogger
 ALLOWED_TERMS = {
     # Technical terms
     'Kubernetes',
+    'Python',
     'SkyPilot',
     'SkyServe',
     'Gemma',
@@ -15,6 +16,7 @@ ALLOWED_TERMS = {
     'OpenAI',
     'API',
     'GPU',
+    'GPT-OSS',
     'VM',
     'GUI',
     'AWS',
@@ -32,6 +34,7 @@ ALLOWED_TERMS = {
     'SDK',
     'TPU',
     'Ray',
+    'Slurm',
     'LoadBalancer',
     'Nginx',
     'Kubernetes',
@@ -47,6 +50,8 @@ ALLOWED_TERMS = {
     'Okta',
     'Prometheus',
     'Grafana',
+    # Providers/brands
+    'PrimeIntellect',
     # Framework names
     'vLLM',
     'TGI',
@@ -56,6 +61,8 @@ ALLOWED_TERMS = {
     'Qwen',
     # Area
     'Europe',
+    'WARP',
+    'Cloudflare'
 }
 
 # Add multi-word terms that should be treated as a single entity
@@ -75,7 +82,14 @@ MULTI_WORD_TERMS = {
     'OAuth2 Proxy',
     'Google Workspace',
     'Google Auth Platform',
+    'Pod Identity',
     'Google Cloud Logging',
+    'AWS Systems Manager',
+    'Microsoft Entra ID',
+    # Providers/brands
+    'Prime Intellect',
+    'Cloudflare Zero Trust',
+    'CoreWeave Object Storage',
 }
 
 

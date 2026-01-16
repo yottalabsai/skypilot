@@ -1,0 +1,18 @@
+{
+    "sourceFile": "start-dev.sh",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 0,
+            "patches": [
+                {
+                    "date": 1768466484616,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                }
+            ],
+            "date": 1768466484616,
+            "name": "Commit-0",
+            "content": "#!/bin/bash\n# Start SkyPilot development environment for Yotta integration\n\n# Colors for output\nGREEN='\\033[0;32m'\nBLUE='\\033[0;34m'\nNC='\\033[0m' # No Color\n\necho -e \"${BLUE}=== SkyPilot Yotta Development Environment ===${NC}\"\necho \"\"\n\n# Activate virtual environment\nif [ -d \"venv-dev\" ]; then\n    echo -e \"${GREEN}✓${NC} Activating development virtual environment...\"\n    source venv-dev/bin/activate\nelse\n    echo \"Error: venv-dev not found. Run 'python3 -m venv venv-dev' first.\"\n    exit 1\nfi\n\n# Show environment info\necho \"\"\necho -e \"${BLUE}Environment Info:${NC}\"\necho \"  Python: $(which python)\"\necho \"  SkyPilot: $(pip show skypilot | grep Version | awk '{print $2}')\"\necho \"  Mode: Development (editable install)\"\necho \"\"\n\n# Check Yotta catalog\nif [ -f \"$HOME/.sky/catalogs/v7/yotta/vms.csv\" ]; then\n    echo -e \"${GREEN}✓${NC} Yotta catalog found: ~/.sky/catalogs/v7/yotta/vms.csv\"\n    echo \"  Instance types: $(tail -n +2 ~/.sky/catalogs/v7/yotta/vms.csv | wc -l | tr -d ' ')\"\nelse\n    echo \"⚠️  Yotta catalog not found. Create ~/.sky/catalogs/v7/yotta/vms.csv\"\nfi\n\n# Check Yotta credentials\nif [ -f \"$HOME/.yotta/credentials\" ]; then\n    echo -e \"${GREEN}✓${NC} Yotta credentials found\"\nelse\n    echo \"⚠️  Yotta credentials not found at ~/.yotta/credentials\"\n    echo \"   Create file with:\"\n    echo \"   userId=<your-user-id>\"\n    echo \"   apikey=<your-api-key>\"\nfi\n\necho \"\"\necho -e \"${BLUE}Ready to develop!${NC} Try:\"\necho \"  sky launch --cloud yotta examples/minimal.yaml\"\necho \"  sky show-gpus --cloud yotta\"\necho \"\"\necho \"To exit: type 'deactivate'\"\n\n# Start interactive shell\nexec $SHELL\n"
+        }
+    ]
+}

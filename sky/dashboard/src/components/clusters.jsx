@@ -19,6 +19,7 @@ import {
   NonCapitalizedTooltip,
   REFRESH_INTERVAL,
   TimestampWithTooltip,
+  LastUpdatedTimestamp,
 } from '@/components/utils';
 import Link from 'next/link';
 import { Button } from '@/components/ui/button';
@@ -33,7 +34,6 @@ import {
 } from '@/components/ui/table';
 import { getClusters, getClusterHistory } from '@/data/connectors/clusters';
 import { getWorkspaces } from '@/data/connectors/workspaces';
-import { getUsers } from '@/data/connectors/users';
 import { sortData } from '@/data/utils';
 import { SquareCode, Terminal, RotateCwIcon, Brackets } from 'lucide-react';
 import { relativeTime } from '@/components/utils';
@@ -44,6 +44,7 @@ import {
 } from '@/components/elements/modals';
 import { StatusBadge } from '@/components/elements/StatusBadge';
 import { useMobile } from '@/hooks/useMobile';
+import { PluginSlot } from '@/plugins/PluginSlot';
 import {
   Select,
   SelectContent,
@@ -56,6 +57,7 @@ import cachePreloader from '@/lib/cache-preloader';
 import { ChevronDownIcon, ChevronRightIcon } from 'lucide-react';
 import yaml from 'js-yaml';
 import { UserDisplay } from '@/components/elements/UserDisplay';
+import { evaluateCondition } from '@/components/shared/FilterSystem';
 
 // Helper function to format cost (copied from workspaces.jsx)
 // const formatCost = (cost) => { // Cost function removed
@@ -87,6 +89,10 @@ const PROPERTY_OPTIONS = [
   {
     label: 'Infra',
     value: 'infra',
+  },
+  {
+    label: 'Labels',
+    value: 'labels',
   },
 ];
 
@@ -173,7 +179,34 @@ export function Clusters() {
   const [isSSHModalOpen, setIsSSHModalOpen] = useState(false);
   const [isVSCodeModalOpen, setIsVSCodeModalOpen] = useState(false);
   const [selectedCluster, setSelectedCluster] = useState(null);
-  const [showHistory, setShowHistory] = useState(false); // 'active' or 'history'
+
+  // Initialize showHistory from URL parameter immediately
+  const getInitialShowHistory = () => {
+    if (typeof window !== 'undefined' && router.isReady) {
+      const historyParam = router.query.history;
+      return historyParam === 'true';
+    }
+    return false;
+  };
+
+  // Initialize historyDays from URL parameter immediately
+  const getInitialHistoryDays = () => {
+    if (typeof window !== 'undefined' && router.isReady) {
+      const daysParam = router.query.historyDays;
+      if (
+        daysParam &&
+        typeof daysParam === 'string' &&
+        ['1', '5', '10', '30'].includes(daysParam)
+      ) {
+        return parseInt(daysParam);
+      }
+    }
+    return 1; // Default to 1 day
+  };
+
+  const [showHistory, setShowHistory] = useState(getInitialShowHistory);
+  const [shouldAnimate, setShouldAnimate] = useState(true); // Track if toggle should animate
+  const [historyDays, setHistoryDays] = useState(getInitialHistoryDays);
   const isMobile = useMobile();
 
   const [filters, setFilters] = useState([]);
@@ -183,14 +216,42 @@ export function Clusters() {
     user: [],
     workspace: [],
     infra: [],
+    labels: [],
   }); /// Option values for properties
+  const [preloadingComplete, setPreloadingComplete] = useState(false);
+  const [lastFetchedTime, setLastFetchedTime] = useState(null);
 
-  // Handle URL query parameters for workspace and user filtering
+  // Handle URL query parameters for workspace and user filtering and show history
   useEffect(() => {
     if (router.isReady) {
       updateFiltersByURLParams();
+
+      // Sync showHistory state with URL if it has changed
+      const historyParam = router.query.history;
+      const expectedState = historyParam === 'true';
+
+      if (showHistory !== expectedState) {
+        setShouldAnimate(false); // Disable animation for programmatic changes
+        setShowHistory(expectedState);
+        // Re-enable animation after a short delay
+        setTimeout(() => setShouldAnimate(true), 50);
+      }
+
+      // Sync historyDays state with URL if it has changed
+      const daysParam = router.query.historyDays;
+      if (
+        daysParam &&
+        typeof daysParam === 'string' &&
+        ['1', '5', '10', '30'].includes(daysParam)
+      ) {
+        const expectedDays = parseInt(daysParam);
+        if (historyDays !== expectedDays) {
+          setHistoryDays(expectedDays);
+        }
+      }
     }
-  }, [router.isReady]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [router.isReady, router.query.history, router.query.historyDays]);
 
   useEffect(() => {
     const fetchFilterData = async () => {
@@ -226,8 +287,7 @@ export function Clusters() {
           finalWorkspaces.add(wsName)
         );
 
-        // Fetch users for the filter dropdown
-        const fetchedUsers = await dashboardCache.get(getUsers);
+        // Get unique users from cluster data for filter dropdown
         const uniqueClusterUsers = [
           ...new Set(
             allClusters
@@ -239,11 +299,9 @@ export function Clusters() {
           ).values(),
         ];
 
-        // Combine fetched users with unique cluster users
+        // Process users for filtering - only use cluster users
         const finalUsers = new Map();
-
-        // Add fetched users first
-        fetchedUsers.forEach((user) => {
+        uniqueClusterUsers.forEach((user) => {
           finalUsers.set(user.userId, {
             userId: user.userId,
             username: user.username,
@@ -251,18 +309,14 @@ export function Clusters() {
           });
         });
 
-        // Add any cluster users not in the fetched list
-        uniqueClusterUsers.forEach((user) => {
-          if (!finalUsers.has(user.userId)) {
-            finalUsers.set(user.userId, {
-              userId: user.userId,
-              username: user.username,
-              display: formatUserDisplay(user.username, user.userId),
-            });
-          }
-        });
+        // Signal that preloading is complete
+        setPreloadingComplete(true);
+        setLastFetchedTime(new Date());
       } catch (error) {
         console.error('Error fetching data for filters:', error);
+        // Still signal completion even on error so the table can load
+        setPreloadingComplete(true);
+        setLastFetchedTime(new Date());
       }
     };
 
@@ -288,6 +342,38 @@ export function Clusters() {
     query.value = values;
 
     // Use replace to avoid adding to browser history for filter changes
+    router.replace(
+      {
+        pathname: router.pathname,
+        query,
+      },
+      undefined,
+      { shallow: true }
+    );
+  };
+
+  // Helper function to update show history in URL
+  const updateShowHistoryURL = (showHistoryValue) => {
+    const query = { ...router.query };
+    query.history = showHistoryValue.toString();
+
+    // Use replace to avoid adding to browser history for show history changes
+    router.replace(
+      {
+        pathname: router.pathname,
+        query,
+      },
+      undefined,
+      { shallow: true }
+    );
+  };
+
+  // Helper function to update history days in URL
+  const updateHistoryDaysURL = (historyDaysValue) => {
+    const query = { ...router.query };
+    query.historyDays = historyDaysValue.toString();
+
+    // Use replace to avoid adding to browser history for history days changes
     router.replace(
       {
         pathname: router.pathname,
@@ -343,13 +429,24 @@ export function Clusters() {
   const handleRefresh = () => {
     // Invalidate cache to ensure fresh data is fetched
     dashboardCache.invalidate(getClusters);
-    dashboardCache.invalidate(getClusterHistory);
     dashboardCache.invalidate(getWorkspaces);
-    dashboardCache.invalidate(getUsers);
-
-    if (refreshDataRef.current) {
-      refreshDataRef.current();
+    // Only invalidate cluster history if we're currently showing history
+    if (showHistory) {
+      dashboardCache.invalidate(getClusterHistory);
     }
+
+    // Reset preloading state so ClusterTable can fetch fresh data immediately
+    setPreloadingComplete(false);
+
+    // Trigger a new preload cycle
+    cachePreloader.preloadForPage('clusters', { force: true }).then(() => {
+      setPreloadingComplete(true);
+      setLastFetchedTime(new Date());
+      // Call refresh after preloading is complete
+      if (refreshDataRef.current) {
+        refreshDataRef.current();
+      }
+    });
   };
 
   return (
@@ -370,36 +467,64 @@ export function Clusters() {
             setFilters={setFilters}
             updateURLParams={updateURLParams}
             placeholder="Filter clusters"
+            filters={filters}
           />
         </div>
         <div className="flex items-center gap-2 ml-auto">
-          <label className="flex items-center cursor-pointer">
-            <input
-              type="checkbox"
-              checked={showHistory}
-              onChange={(e) => setShowHistory(e.target.checked)}
-              className="sr-only"
-            />
-            <div
-              className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors ${
-                showHistory ? 'bg-sky-600' : 'bg-gray-300'
-              }`}
-            >
-              <span
-                className={`inline-block h-3 w-3 transform rounded-full bg-white transition-transform ${
-                  showHistory ? 'translate-x-5' : 'translate-x-1'
-                }`}
+          <div className="flex items-center gap-2">
+            <label className="flex items-center cursor-pointer">
+              <input
+                type="checkbox"
+                checked={showHistory}
+                onChange={(e) => {
+                  const newValue = e.target.checked;
+                  setShowHistory(newValue);
+                  updateShowHistoryURL(newValue);
+                }}
+                className="sr-only"
               />
-            </div>
-            <span className="ml-2 text-sm text-gray-700">
-              Show history (Last 30 days)
-            </span>
-          </label>
+              <div
+                className={`relative inline-flex h-5 w-9 items-center rounded-full ${shouldAnimate ? 'transition-colors' : ''} ${
+                  showHistory ? 'bg-sky-600' : 'bg-gray-300'
+                }`}
+              >
+                <span
+                  className={`inline-block h-3 w-3 transform rounded-full bg-white ${shouldAnimate ? 'transition-transform' : ''} ${
+                    showHistory ? 'translate-x-5' : 'translate-x-1'
+                  }`}
+                />
+              </div>
+              <span className="ml-2 text-sm text-gray-700">Show history</span>
+            </label>
+            {showHistory && (
+              <Select
+                value={historyDays.toString()}
+                onValueChange={(value) => {
+                  const newDays = parseInt(value);
+                  setHistoryDays(newDays);
+                  updateHistoryDaysURL(newDays);
+                }}
+              >
+                <SelectTrigger className="w-24 h-8 text-xs">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent>
+                  <SelectItem value="1">1 day</SelectItem>
+                  <SelectItem value="5">5 days</SelectItem>
+                  <SelectItem value="10">10 days</SelectItem>
+                  <SelectItem value="30">30 days</SelectItem>
+                </SelectContent>
+              </Select>
+            )}
+          </div>
           {loading && (
             <div className="flex items-center">
               <CircularProgress size={15} className="mt-0" />
               <span className="ml-2 text-gray-500 text-sm">Loading...</span>
             </div>
+          )}
+          {!loading && lastFetchedTime && (
+            <LastUpdatedTimestamp timestamp={lastFetchedTime} />
           )}
           <button
             onClick={handleRefresh}
@@ -424,6 +549,7 @@ export function Clusters() {
         refreshDataRef={refreshDataRef}
         filters={filters}
         showHistory={showHistory}
+        historyDays={historyDays}
         onOpenSSHModal={(cluster) => {
           setSelectedCluster(cluster);
           setIsSSHModalOpen(true);
@@ -433,6 +559,7 @@ export function Clusters() {
           setIsVSCodeModalOpen(true);
         }}
         setOptionValues={setOptionValues}
+        preloadingComplete={preloadingComplete}
       />
 
       {/* SSH Instructions Modal */}
@@ -457,9 +584,11 @@ export function ClusterTable({
   refreshDataRef,
   filters,
   showHistory,
+  historyDays,
   onOpenSSHModal,
   onOpenVSCodeModal,
   setOptionValues,
+  preloadingComplete,
 }) {
   const [data, setData] = useState([]);
   const [sortConfig, setSortConfig] = useState({
@@ -478,6 +607,7 @@ export function ClusterTable({
       user: [],
       workspace: [],
       infra: [],
+      labels: [],
     };
 
     const pushWithoutDuplication = (array, item) => {
@@ -492,6 +622,17 @@ export function ClusterTable({
       pushWithoutDuplication(optionValues.user, cluster.user);
       pushWithoutDuplication(optionValues.workspace, cluster.workspace);
       pushWithoutDuplication(optionValues.infra, cluster.infra);
+
+      // Extract labels - add only key:value pairs
+      const labels = cluster.labels || {};
+      if (labels && typeof labels === 'object') {
+        Object.entries(labels).forEach(([key, value]) => {
+          if (key && value) {
+            // Add key:value pair format only
+            pushWithoutDuplication(optionValues.labels, `${key}:${value}`);
+          }
+        });
+      }
     });
 
     return optionValues;
@@ -502,10 +643,19 @@ export function ClusterTable({
     setLocalLoading(true);
 
     try {
+      // Use cached data if available, which should have been preloaded by cache preloader
       const activeClusters = await dashboardCache.get(getClusters);
 
       if (showHistory) {
-        const historyClusters = await dashboardCache.get(getClusterHistory);
+        let historyClusters = [];
+        try {
+          historyClusters = await dashboardCache.get(getClusterHistory, [
+            null,
+            historyDays,
+          ]);
+        } catch (error) {
+          console.error('Error fetching cluster history:', error);
+        }
         // Mark clusters as active or historical for UI distinction
         const markedActiveClusters = activeClusters.map((cluster) => ({
           ...cluster,
@@ -520,8 +670,7 @@ export function ClusterTable({
         markedHistoryClusters.forEach((histCluster) => {
           const existsInActive = activeClusters.some(
             (activeCluster) =>
-              (activeCluster.cluster || activeCluster.name) ===
-              (histCluster.cluster || histCluster.name)
+              activeCluster.cluster_hash === histCluster.cluster_hash
           );
           if (!existsInActive) {
             combinedData.push(histCluster);
@@ -551,34 +700,7 @@ export function ClusterTable({
     setLoading(false);
     setLocalLoading(false);
     setIsInitialLoad(false);
-  }, [setLoading, showHistory]);
-
-  // Utility: checks a condition based on operator
-  const evaluateCondition = (item, filter) => {
-    const { property, operator, value } = filter;
-
-    if (!value) return true; // skip empty filters
-
-    // Global search: check all values
-    if (!property) {
-      const strValue = value.toLowerCase();
-      return Object.values(item).some((val) =>
-        val?.toString().toLowerCase().includes(strValue)
-      );
-    }
-
-    const itemValue = item[property.toLowerCase()]?.toString().toLowerCase();
-    const filterValue = value.toString().toLowerCase();
-
-    switch (operator) {
-      case '=':
-        return itemValue === filterValue;
-      case ':':
-        return itemValue?.includes(filterValue);
-      default:
-        return true;
-    }
-  };
+  }, [setLoading, showHistory, historyDays, setOptionValues]);
 
   // Use useMemo to compute sorted data
   const sortedData = React.useMemo(() => {
@@ -622,19 +744,26 @@ export function ClusterTable({
     setData([]);
     let isCurrent = true;
 
-    fetchData();
+    // Only start fetching data after preloading is complete
+    if (preloadingComplete) {
+      fetchData();
 
-    const interval = setInterval(() => {
-      if (isCurrent) {
-        fetchData();
-      }
-    }, refreshInterval);
+      const interval = setInterval(() => {
+        if (isCurrent && window.document.visibilityState === 'visible') {
+          fetchData();
+        }
+      }, refreshInterval);
+
+      return () => {
+        isCurrent = false;
+        clearInterval(interval);
+      };
+    }
 
     return () => {
       isCurrent = false;
-      clearInterval(interval);
     };
-  }, [refreshInterval, fetchData]);
+  }, [refreshInterval, fetchData, preloadingComplete]);
 
   // Reset to first page when data changes
   useEffect(() => {
@@ -747,7 +876,7 @@ export function ClusterTable({
             </TableHeader>
 
             <TableBody>
-              {loading && isInitialLoad ? (
+              {loading || !preloadingComplete ? (
                 <TableRow>
                   <TableCell
                     colSpan={9}
@@ -764,7 +893,16 @@ export function ClusterTable({
                   return (
                     <TableRow key={index}>
                       <TableCell>
-                        <StatusBadge status={item.status} />
+                        <PluginSlot
+                          name="clusters.table.status.badge"
+                          context={item}
+                          fallback={
+                            <StatusBadge
+                              status={item.status}
+                              statusTooltip={item.statusTooltip}
+                            />
+                          }
+                        />
                       </TableCell>
                       <TableCell>
                         <Link
@@ -1066,6 +1204,7 @@ const FilterDropdown = ({
   setFilters,
   updateURLParams,
   placeholder = 'Filter clusters',
+  filters = [],
 }) => {
   const inputRef = useRef(null);
   const dropdownRef = useRef(null);
@@ -1097,22 +1236,57 @@ const FilterDropdown = ({
   useEffect(() => {
     let updatedValueOptions = [];
 
+    // Obtain propertyLabel (filter.property value)
+    let propertyLabel = propertyValue || '';
+    if (propertyLabel.length > 1) {
+      propertyLabel = propertyValue[0].toUpperCase();
+
+      for (let index = 1; index < propertyValue.length; index++) {
+        propertyLabel += propertyValue[index];
+      }
+    }
+    // Obtain the values of filter to exclude from updatedValueOptions
+    const selectedValues = filters
+      .filter((filter) => filter.property === propertyLabel)
+      .map((filter) => filter.value);
+
     if (valueList && typeof valueList === 'object') {
       switch (propertyValue) {
         case 'status':
-          updatedValueOptions = valueList.status || [];
+          updatedValueOptions =
+            valueList.status.filter(
+              (value) => !selectedValues.find((val) => val === value)
+            ) || [];
           break;
         case 'user':
-          updatedValueOptions = valueList.user || [];
+          updatedValueOptions =
+            valueList.user.filter(
+              (value) => !selectedValues.find((val) => val === value)
+            ) || [];
           break;
         case 'cluster':
-          updatedValueOptions = valueList.cluster || [];
+          updatedValueOptions =
+            valueList.cluster.filter(
+              (value) => !selectedValues.find((val) => val === value)
+            ) || [];
           break;
         case 'workspace':
-          updatedValueOptions = valueList.workspace || [];
+          updatedValueOptions =
+            valueList.workspace.filter(
+              (value) => !selectedValues.find((val) => val === value)
+            ) || [];
           break;
         case 'infra':
-          updatedValueOptions = valueList.infra || [];
+          updatedValueOptions =
+            valueList.infra.filter(
+              (value) => !selectedValues.find((val) => val === value)
+            ) || [];
+          break;
+        case 'labels':
+          updatedValueOptions =
+            valueList.labels.filter(
+              (value) => !selectedValues.find((val) => val === value)
+            ) || [];
           break;
         default:
           break;
@@ -1128,7 +1302,7 @@ const FilterDropdown = ({
     }
 
     setValueOptions(updatedValueOptions);
-  }, [propertyValue, valueList, value]);
+  }, [propertyValue, valueList, value, filters]);
 
   // Helper function to get the capitalized label for a property value
   const getPropertyLabel = (propertyValue) => {

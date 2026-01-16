@@ -1,0 +1,18 @@
+{
+    "sourceFile": "venv-dev/README.md",
+    "activeCommit": 0,
+    "commits": [
+        {
+            "activePatchIndex": 0,
+            "patches": [
+                {
+                    "date": 1768466462394,
+                    "content": "Index: \n===================================================================\n--- \n+++ \n"
+                }
+            ],
+            "date": 1768466462394,
+            "name": "Commit-0",
+            "content": "# SkyPilot Development Environment\n\nThis is a development virtual environment for contributing to the Yotta integration in SkyPilot.\n\n## Usage\n\n```bash\n# Activate the dev environment\nsource venv-dev/bin/activate\n\n# Run SkyPilot commands\nsky launch --cloud yotta examples/minimal.yaml\n\n# Deactivate when done\ndeactivate\n```\n\n## Why separate environment?\n\nAs a contributor working on a fork, this dev environment isolates changes from your system-installed SkyPilot:\n- ✅ Changes to code take effect immediately (editable install)\n- ✅ System SkyPilot remains unaffected\n- ✅ Can test Yotta integration without conflicts\n- ✅ Uses separate `~/.sky/` configuration\n\n## Development workflow\n\n1. Make code changes in `sky/clouds/yotta.py` or `sky/provision/yotta/`\n2. Changes are immediately active (no reinstall needed)\n3. Test with: `sky launch --cloud yotta <yaml>`\n4. Create catalog: populate `~/.sky/catalogs/v7/yotta/vms.csv`\n"
+        }
+    ]
+}
