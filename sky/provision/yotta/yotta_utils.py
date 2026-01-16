@@ -20,9 +20,7 @@ ENDPOINT = 'https://api.dev.yottalabs.ai/sdk/api'
 API_KEY_HEADER = 'X-API-KEY'
 
 GPU_NAME_MAP = {
-    '1x_A10_SECURE': 'NVIDIA_A10_24G',
-    '1x_L4_SECURE': 'NVIDIA_L4_24G',
-    '2x_L4_SECURE': 'NVIDIA_L4_24G',
+    '8x_RTX5090_32G': 'NVIDIA_GeForce_RTX_5090_32G',
 }
 
 

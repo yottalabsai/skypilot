@@ -202,7 +202,9 @@ def get_cluster_info(
         head_instance_id=head_instance_id,
         provider_name='yotta',
         provider_config=provider_config,
-        custom_ray_options={'use_external_ip': True},
+        # Ray cluster uses internal IPs for inter-node communication
+        # External IPs are only used for SSH access from outside
+        custom_ray_options={'use_external_ip': False},
     )
 
 
