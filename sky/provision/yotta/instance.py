@@ -1,6 +1,6 @@
 """Yotta instance provisioning."""
 import time
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, List, Optional, Tuple
 
 from sky import sky_logging
 from sky.provision import common
@@ -29,12 +29,14 @@ def _filter_instances(cluster_name_on_cloud: str,
 
     filtered_instances = {}
     for instance_id, instance in instances.items():
-        status = instance.get('status')
-        try:
-            instance_status = PodStatusEnum(status)
-        except ValueError:
-            logger.warning(f'Unknown pod status: {status}')
-            continue
+        # Check if we have the internal status (from mock or already converted)
+        if '_internal_status' in instance:
+            instance_status = instance['_internal_status']
+        else:
+            # Convert from API status
+            api_status = instance.get('status', 0)
+            instance_status = PodStatusEnum.from_api_status(api_status)
+        
         if (status_filters is not None and
                 instance_status not in status_filters):
             continue
@@ -52,9 +54,10 @@ def _get_head_instance_id(instances: Dict[str, Any]) -> Optional[str]:
     return head_instance_id
 
 
-def run_instances(region: str, cluster_name_on_cloud: str,
+def run_instances(region: str, cluster_name: str, cluster_name_on_cloud: str,
                   config: common.ProvisionConfig) -> common.ProvisionRecord:
     """Runs instances for the given cluster."""
+    del cluster_name  # unused
 
     pending_status = [PodStatusEnum.INITIALIZE]
 
@@ -209,11 +212,14 @@ def get_cluster_info(
 
 
 def query_instances(
+    cluster_name: str,
     cluster_name_on_cloud: str,
     provider_config: Optional[Dict[str, Any]] = None,
     non_terminated_only: bool = True,
-) -> Dict[str, Optional[status_lib.ClusterStatus]]:
+    retry_if_missing: bool = False,
+) -> Dict[str, Tuple[Optional[status_lib.ClusterStatus], Optional[str]]]:
     """See sky/provision/__init__.py"""
+    del cluster_name, retry_if_missing  # unused
     assert provider_config is not None, (cluster_name_on_cloud, provider_config)
     instances = _filter_instances(cluster_name_on_cloud, None)
     status_map = {
@@ -226,12 +232,20 @@ def query_instances(
         PodStatusEnum.PAUSING: status_lib.ClusterStatus.UP,
         PodStatusEnum.PAUSED: status_lib.ClusterStatus.STOPPED,
     }
-    statuses: Dict[str, Optional[status_lib.ClusterStatus]] = {}
+    statuses: Dict[str, Tuple[Optional[status_lib.ClusterStatus],
+                              Optional[str]]] = {}
     for inst_id, instance in instances.items():
-        status = status_map[PodStatusEnum(instance.get('status'))]
+        # Check if we have the internal status (from mock or already converted)
+        if '_internal_status' in instance:
+            instance_status = instance['_internal_status']
+        else:
+            # Convert from API status
+            api_status = instance.get('status', 0)
+            instance_status = PodStatusEnum.from_api_status(api_status)
+        status = status_map.get(instance_status)
         if non_terminated_only and status is None:
             continue
-        statuses[inst_id] = status
+        statuses[inst_id] = (status, None)
     return statuses
 
 

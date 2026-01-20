@@ -19,8 +19,51 @@ CREDENTIALS_FILE_PATH = os.path.expanduser('~/.yotta/credentials')
 ENDPOINT = 'https://api.dev.yottalabs.ai/sdk/api'
 API_KEY_HEADER = 'X-API-KEY'
 
+# ============= MOCK MODE FOR TESTING =============
+# Set to True to use hardcoded pod data instead of calling Yotta API
+MOCK_MODE = True
+
+# Hardcoded pod data for testing (from actual Yotta pod)
+MOCK_POD_DATA = {
+    'id': 402872365298094821,
+    'name': 'sky-test-mock-head',  # Will be overwritten by actual cluster name
+    'status': 20,  # Maps to PodStatusEnum.RUNNING (status / 10 = 2, but API returns 20)
+    'image': 'yotta-btc-dev-harbor-58.com:8089/dockerhub-public-cache/yottalabsai/pytorch:2.9.0-py3.11-cuda12.8.1-cudnn-devel-ubuntu22.04',
+    'gpuType': 'NVIDIA_GeForce_RTX_5090_32G',
+    'gpuCount': 1,
+    'region': 'us-central-3',
+    'sshUser': 'user',
+    'sshHost': '8hddab3v.ant3.dev.yottalabs.ai',
+    'sshPort': '22',
+    'expose': [
+        {
+            'protocol': 'SSH',
+            'port': 22,
+            'ingressEnabled': False,
+            'host': '8hddab3v.ant3.dev.yottalabs.ai',
+            'proxyPort': 30010,
+            'privateHost': '172.20.71.176',
+            'ingressUrl': '',
+            'healthy': True
+        },
+        {
+            'protocol': 'HTTP',
+            'port': 8888,
+            'ingressEnabled': False,
+            'host': '8hddab3v.ant3.dev.yottalabs.ai',
+            'proxyPort': 30011,
+            'privateHost': '172.20.71.176',
+            'ingressUrl': '',
+            'healthy': True
+        }
+    ],
+    'podInternalIp': '172.20.71.176',
+}
+# ============= END MOCK MODE =============
+
 GPU_NAME_MAP = {
-    '8x_RTX5090_32G': 'NVIDIA_GeForce_RTX_5090_32G',
+    '1x_RTX5090_SECURE': 'NVIDIA_GeForce_RTX_5090_32G',
+    '8x_RTX5090_SECURE': 'NVIDIA_GeForce_RTX_5090_32G',
 }
 
 
@@ -33,6 +76,31 @@ class PodStatusEnum(enum.Enum):
     TERMINATING = 4
     TERMINATED = 5
     FAILED = 6
+
+    @classmethod
+    def from_api_status(cls, api_status: int) -> 'PodStatusEnum':
+        """Convert API status (0, 10, 20, ...) to PodStatusEnum.
+        
+        Yotta API returns status as multiples of 10 (0, 10, 20, 30, ...)
+        but PodStatusEnum uses 0, 1, 2, 3, ...
+        """
+        # Check if it's already in the correct range
+        if api_status <= 6:
+            return cls(api_status)
+        # Convert from API format (0, 10, 20...) to enum format (0, 1, 2...)
+        # Note: API status 20 -> RUNNING (1), etc.
+        # Based on the pod data, status=20 means running
+        status_map = {
+            0: cls.INITIALIZE,
+            10: cls.INITIALIZE,  # Creating
+            20: cls.RUNNING,
+            30: cls.PAUSING,
+            40: cls.PAUSED,
+            50: cls.TERMINATING,
+            60: cls.TERMINATED,
+            70: cls.FAILED,
+        }
+        return status_map.get(api_status, cls.FAILED)
 
 
 class CloudType(enum.Enum):
@@ -121,8 +189,13 @@ class YottaClient:
 
     def __init__(self):
         self.user_id, self.api_key = _load_credentials()
+        # Track mock instances by cluster name
+        self._mock_instances: Dict[str, Dict[str, Any]] = {}
 
     def check_api_key(self) -> bool:
+        if MOCK_MODE:
+            logger.info('[MOCK] Skipping API key check, returning True')
+            return True
         url = f'{ENDPOINT}/key/check?userId={self.user_id}'
         logger.debug(f'Checking api key for user {self.user_id}')
         response = requests.get(url, headers={API_KEY_HEADER: self.api_key})
@@ -134,6 +207,28 @@ class YottaClient:
 
     def list_instances(self,
                        cluster_name_on_cloud: str) -> Dict[str, Dict[str, Any]]:
+        if MOCK_MODE:
+            logger.info(f'[MOCK] list_instances for cluster: '
+                        f'{cluster_name_on_cloud}')
+            # In mock mode, always return the mock pod as the head instance
+            # This simulates an existing pod that we want to use
+            mock_instance = MOCK_POD_DATA.copy()
+            mock_instance['name'] = f'{cluster_name_on_cloud}-head'
+            instance_id = str(mock_instance['id'])
+            # Convert status to internal format
+            mock_instance['_internal_status'] = PodStatusEnum.RUNNING
+            # Build port2endpoint mapping
+            mock_instance['port2endpoint'] = {}
+            for port in mock_instance.get('expose', []):
+                mock_instance['port2endpoint'][port['port']] = {
+                    'host': port['host'],
+                    'privateHost': port.get('privateHost', port['host']),
+                    'port': port['proxyPort']
+                }
+            result = {instance_id: mock_instance}
+            logger.info(f'[MOCK] Found {len(result)} instances: {list(result.keys())}')
+            return result
+
         url = f'{ENDPOINT}/compute/list'
         all_records: List[Dict[str, Any]] = []
         request_data = {'name': cluster_name_on_cloud}
@@ -153,7 +248,11 @@ class YottaClient:
         unique_records = {}
         for record in all_records:
             unique_records[record['id']] = record
-            status = PodStatusEnum(record.get('status'))
+            # Convert API status to PodStatusEnum
+            api_status = record.get('status', 0)
+            status = PodStatusEnum.from_api_status(api_status)
+            # Store the converted status for internal use
+            record['_internal_status'] = status
             if status == PodStatusEnum.RUNNING:
                 ports = record.get('expose', [])
                 record['port2endpoint'] = {}
@@ -161,7 +260,7 @@ class YottaClient:
                     # container private port mapping to host public port
                     record['port2endpoint'][port['port']] = {
                         'host': port['host'],
-                        'privateHost': port['privateHost'],
+                        'privateHost': port.get('privateHost', port['host']),
                         'port': port['proxyPort']
                     }
         return unique_records
@@ -181,6 +280,15 @@ class YottaClient:
         """
         _ = region  # Explicitly mark as unused but keep for API compatibility
         name = f'{cluster_name}-{node_type}'
+
+        if MOCK_MODE:
+            # In mock mode, return the hardcoded pod data
+            # Since list_instances already returns this pod, we just return the ID
+            logger.info(f'[MOCK] launch called for {name} - using existing mock pod')
+            instance_id = str(MOCK_POD_DATA['id'])
+            logger.info(f'[MOCK] Returning existing instance {instance_id}')
+            return instance_id
+
         gpu_type = GPU_NAME_MAP[instance_type]
         gpu_quantity = int(instance_type.split('_')[0].replace('x', ''))
         cloud_type = instance_type.split('_')[2]
@@ -263,6 +371,14 @@ class YottaClient:
         """Terminate instances."""
         if not instance_id:
             return
+        if MOCK_MODE:
+            logger.info(f'[MOCK] terminate_instances called for {instance_id}')
+            # Remove from mock instances
+            str_id = str(instance_id)
+            if str_id in self._mock_instances:
+                del self._mock_instances[str_id]
+            return {'code': 10000, 'message': 'success'}
+
         url = f'{ENDPOINT}/compute/action'
         request_data = {'id': instance_id, 'action': 'terminate'}
         response = requests.post(url=url,
@@ -273,6 +389,9 @@ class YottaClient:
 
     def list_ssh_keys(self):
         """list ssh keys."""
+        if MOCK_MODE:
+            logger.info('[MOCK] list_ssh_keys called')
+            return []
         url = f'{ENDPOINT}/compute/keypair/list'
         response = requests.get(url=url, headers={API_KEY_HEADER: self.api_key})
         raise_yotta_error(response)
@@ -281,6 +400,9 @@ class YottaClient:
 
     def get_or_add_ssh_key(self, public_key: str = '') -> Dict[str, str]:
         """Add ssh key if not already added."""
+        if MOCK_MODE:
+            logger.info('[MOCK] get_or_add_ssh_key called')
+            return {'name': 'mock-ssh-key', 'ssh_key': public_key}
         ssh_keys = self.list_ssh_keys()
         for key in ssh_keys:
             if key['publicKey'].strip().split()[:2] == public_key.strip().split(

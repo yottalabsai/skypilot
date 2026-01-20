@@ -53,7 +53,9 @@ class Yotta(clouds.Cloud):
 
     @classmethod
     def _unsupported_features_for_resources(
-        cls, resources: 'resources_lib.Resources'
+        cls,
+        resources: 'resources_lib.Resources',
+        region: Optional[str] = None,
     ) -> Dict[clouds.CloudImplementationFeatures, str]:
         """The features not supported based on the resources provided.
 
@@ -64,7 +66,7 @@ class Yotta(clouds.Cloud):
             A dict of {feature: reason} for the features not supported by the
             cloud implementation.
         """
-        del resources  # unused
+        del resources, region  # unused
         return cls._CLOUD_UNSUPPORTED_FEATURES
 
     @classmethod
@@ -72,11 +74,16 @@ class Yotta(clouds.Cloud):
         return cls._MAX_CLUSTER_NAME_LEN_LIMIT
 
     @classmethod
-    def regions_with_offering(cls, instance_type: str,
-                              accelerators: Optional[Dict[str, int]],
-                              use_spot: bool, region: Optional[str],
-                              zone: Optional[str]) -> List[clouds.Region]:
-        del accelerators  # unused
+    def regions_with_offering(
+        cls,
+        instance_type: str,
+        accelerators: Optional[Dict[str, int]],
+        use_spot: bool,
+        region: Optional[str],
+        zone: Optional[str],
+        resources: Optional['resources_lib.Resources'] = None,
+    ) -> List[clouds.Region]:
+        del accelerators, resources  # unused
         regions = catalog.get_region_zones_for_instance_type(
             instance_type, use_spot, _CLOUD)
 
@@ -273,7 +280,7 @@ class Yotta(clouds.Cloud):
             return False, ('Failed to access Yotta Cloud'
                            ' with credentials. '
                            'To configure credentials, go to:\n    '
-                           '  https://console.yottalabs.ai \n    '
+                           '  https://console.dev.yottalabs.ai \n    '
                            'to obtain an API key, '
                            'then add save the contents '
                            'to ~/.yotta/credentials \n')
